@@ -1,0 +1,355 @@
+<!DOCTYPE html>
+<html lang="pt-BR" class="h-full">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GTO Quantum Engine v27.0 - MaxEV Production</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@700&family=JetBrains+Mono:wght@700;800&family=Plus+Jakarta+Sans:wght@600;800&display=swap');
+        body { font-family: 'Plus Jakarta Sans', sans-serif; background: #020305; color: #f8fafc; }
+        .font-poker { font-family: 'JetBrains Mono', monospace; }
+        .font-display { font-family: 'Space Grotesk', sans-serif; }
+        .poker-felt { background: radial-gradient(circle at center, #063c20 0%, #031f10 60%, #010a05 100%); box-shadow: inset 0 0 120px rgba(0,0,0,1), inset 0 0 40px rgba(16,185,129,0.15); }
+        .table-rail { background: linear-gradient(135deg, #111827 0%, #030712 100%); box-shadow: 0 50px 100px -20px rgba(0,0,0,0.95), inset 0 2px 4px rgba(255,255,255,0.08); }
+        .card-container { perspective: 1000px; width: 46px; height: 64px; will-change: transform; }
+        .card-3d { width: 100%; height: 100%; position: relative; transform-style: preserve-3d; transition: transform 0.6s cubic-bezier(0.23, 1, 0.32, 1); }
+        .card-container.is-flipped .card-3d { transform: rotateY(180deg); }
+        .card-front, .card-back { position: absolute; width: 100%; height: 100%; backface-visibility: hidden; border-radius: 6px; }
+        .card-front { background: #ffffff; transform: rotateY(180deg); box-shadow: 0 4px 10px rgba(0,0,0,0.4); }
+        .card-back { background: linear-gradient(135deg, #1d4ed8 0%, #0f172a 100%); border: 1px solid #3b82f6; }
+        .matrix-grid { display: grid; grid-template-columns: repeat(13, minmax(0, 1fr)); gap: 2px; }
+        .btn-premium { position: relative; transition: all 0.2s ease; backdrop-filter: blur(8px); }
+        .btn-premium:hover:not(:disabled) { transform: translateY(-3px); box-shadow: 0 12px 20px -5px var(--glow-color); }
+        @keyframes pulse-gto { 0% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.6); } 100% { box-shadow: 0 0 0 25px rgba(16, 185, 129, 0); } }
+        .success-flash { animation: pulse-gto 0.5s ease-out; }
+    </style>
+</head>
+<body class="h-full flex flex-col overflow-hidden select-none">
+
+    <!-- TOPBAR -->
+    <header class="border-b border-slate-900 bg-[#05070c] px-3 md:px-6 h-14 flex items-center justify-between shrink-0 z-30">
+        <div class="flex items-center gap-4">
+            <span class="text-xs font-black tracking-widest text-slate-200 font-display">QUANTUM SOLVER <span class="text-emerald-400">MaxEV v27.0</span></span>
+            <div class="h-5 w-[1px] bg-slate-800"></div>
+            <span class="text-[10px] font-poker bg-emerald-500/10 text-emerald-400 px-2 py-0.5 rounded border border-emerald-500/20">REAL-TIME NASH EV</span>
+        </div>
+        <div class="flex items-center gap-4 font-poker text-xs">
+            <div class="bg-slate-950 px-3 py-1.5 rounded-xl border border-slate-900 flex items-center gap-2">
+                <span class="text-slate-500 font-bold">STREAK:</span>
+                <span id="score-streak" class="font-extrabold text-amber-400">0</span>
+            </div>
+            <div class="bg-slate-950 px-3 py-1.5 rounded-xl border border-slate-900 flex items-center gap-2">
+                <span class="text-slate-500 font-bold">PRECISÃO STRAT:</span>
+                <span id="score-pct" class="font-extrabold text-emerald-400">0%</span>
+            </div>
+        </div>
+    </header>
+
+    <div class="flex-1 flex overflow-hidden">
+        <!-- MATRIZ ESQUERDA -->
+        <aside class="hidden md:flex md:w-72 border-r border-slate-900 bg-[#05070c] p-4 flex flex-col gap-4 shrink-0">
+            <div class="flex justify-between items-center">
+                <h3 class="text-[10px] font-bold tracking-wider text-slate-400 uppercase font-display">Matriz Dinâmica de Equidade</h3>
+                <span id="matrix-pos-badge" class="text-[10px] font-poker font-bold bg-indigo-500/10 text-indigo-400 px-2 py-0.5 rounded">HERO</span>
+            </div>
+            <div class="p-1.5 bg-slate-950 rounded-xl border border-slate-900">
+                <div id="poker-matrix" class="matrix-grid w-full aspect-square text-[8px] font-poker font-bold text-center"></div>
+            </div>
+            <div class="mt-auto space-y-1.5 font-poker">
+                <label class="text-[9px] text-slate-500 font-bold block uppercase tracking-wider">Simular Posição Fixo</label>
+                <select id="filter-hero-pos" onchange="gerarProximoSpot()" class="w-full bg-slate-950 border border-slate-900 rounded-xl p-2 text-slate-300 text-xs font-bold cursor-pointer outline-none">
+                    <option value="ANY">🎲 FILTRO DINÂMICO</option>
+                    <option value="UTG">UTG</option>
+                    <option value="CO">CO</option>
+                    <option value="BTN">BTN</option>
+                    <option value="BB">BB</option>
+                </select>
+            </div>
+        </aside>
+
+        <!-- ARENA CENTRAL -->
+        <main id="arena-surface" class="flex-1 flex flex-col justify-between items-center p-3 md:p-6 bg-[#020305] overflow-y-auto">
+            <div class="w-full max-w-[850px] flex-1 flex items-center justify-center relative my-auto">
+                <div class="w-full aspect-[2.1/1] table-rail rounded-[220px] p-3 relative flex items-center justify-center">
+                    <div class="poker-felt w-full h-full rounded-[205px] relative flex flex-col items-center justify-center">
+                        
+                        <!-- BOARD -->
+                        <div class="flex flex-col items-center gap-1.5 bg-slate-950/90 backdrop-blur-md px-5 py-2 rounded-xl border border-slate-800 shadow-2xl z-10">
+                            <div class="flex items-center gap-3 font-poker">
+                                <span id="board-street" class="text-[9px] font-black text-indigo-400">PREFLOP</span>
+                                <span id="pot-display" class="text-[11px] font-black text-emerald-400">POT: 1.5 BB</span>
+                            </div>
+                            <div id="board-cards-row" class="flex gap-1.5 min-h-[64px] items-center"></div>
+                        </div>
+
+                        <div id="seats-layer" class="absolute inset-0 pointer-events-none"></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- DESCRIÇÃO DO CENÁRIO -->
+            <div id="board-desc" class="w-full max-w-[750px] bg-[#05070c] border border-slate-900 rounded-xl px-4 py-2 text-center text-xs text-slate-400 mb-3 font-poker">
+                Calculando equidades Nash...
+            </div>
+
+            <!-- PAINEL DE AÇÃO -->
+            <div class="w-full max-w-[750px] bg-[#05070c] border border-slate-800/60 p-4 rounded-xl flex flex-col gap-3 shrink-0 shadow-2xl">
+                <div id="action-buttons-container" class="flex gap-2.5 w-full justify-center font-display font-bold">
+                    <button id="btn-fold" onclick="processarDecisao(0)" style="--glow-color: rgba(239,68,68,0.2);" class="btn-premium flex-1 h-12 bg-rose-950/10 hover:bg-rose-900/20 border border-rose-900 text-rose-400 rounded-xl flex flex-col items-center justify-center">
+                        <span class="text-[8px] font-poker font-bold text-rose-500/50 mb-0.5">[1] FOLD</span>
+                        <span class="text-xs font-black tracking-wider">EV: 0.00</span>
+                    </button>
+                    <button id="btn-call" onclick="processarDecisao(1)" style="--glow-color: rgba(148,163,184,0.1);" class="btn-premium flex-1 h-12 bg-slate-900/50 hover:bg-slate-800/60 border border-slate-700 text-slate-300 rounded-xl flex flex-col items-center justify-center">
+                        <span class="text-[8px] font-poker font-bold text-slate-500 mb-0.5">[2]</span>
+                        <span id="lbl-call" class="text-xs font-black tracking-wider">CHECK</span>
+                    </button>
+                    <button id="btn-raise" onclick="processarDecisao(2)" style="--glow-color: rgba(16,185,129,0.2);" class="btn-premium flex-1 h-12 bg-emerald-950/10 hover:bg-emerald-900/20 border border-emerald-900 text-emerald-400 rounded-xl flex flex-col items-center justify-center">
+                        <span class="text-[8px] font-poker font-bold text-emerald-500/50 mb-0.5">[3]</span>
+                        <span id="lbl-raise" class="text-xs font-black tracking-wider">RAISE</span>
+                    </button>
+                </div>
+            </div>
+
+            <button id="btn-continue" onclick="gerarProximoSpot()" class="hidden w-full max-w-[750px] h-12 rounded-xl font-extrabold text-xs tracking-widest bg-emerald-400 text-slate-950 mt-3 font-display flex items-center justify-center gap-2">
+                <span>AVANÇAR PARA O PRÓXIMO SPOT [Espaço]</span>
+            </button>
+        </main>
+
+        <!-- PAINEL REAL TIME SOLVER -->
+        <aside class="hidden md:flex md:w-72 border-l border-slate-900 bg-[#05070c] p-4 flex flex-col gap-4 shrink-0">
+            <h3 class="text-[10px] font-bold tracking-wider text-slate-400 uppercase font-display">Calculadora de EV Esperado</h3>
+            <div id="solver-feedback" role="status" aria-live="polite" class="bg-slate-950 border border-slate-900 p-3 rounded-xl text-center text-xs text-slate-500 italic font-poker">
+                Analise o Spot e execute a jogada +EV.
+            </div>
+            <div id="solver-bars-box" class="hidden flex flex-col gap-3 font-poker">
+                <h4 class="text-[9px] font-bold text-slate-500 uppercase tracking-wider">Projeção Matemática de EV</h4>
+                <div id="solver-bars" class="flex flex-col gap-2"></div>
+            </div>
+        </aside>
+    </div>
+
+    <script>
+        const RANKS = ["A", "K", "Q", "J", "T", "9", "8", "7", "6", "5", "4", "3", "2"];
+        const SUITS = ["s", "h", "d", "c"];
+        const SUIT_SYMBOLS = {'s':'♠', 'h':'♥', 'd':'♦', 'c':'♣'};
+        const SUIT_COLORS = {'s':'text-slate-900', 'h':'text-rose-600', 'd':'text-blue-600', 'c':'text-emerald-700'};
+        
+        let positionsList = ['UTG', 'CO', 'BTN', 'BB'];
+        let appState = { total: 0, correct: 0, streak: 0 };
+        let activeSpot = {};
+        let isLocked = false;
+
+        window.onload = () => {
+            renderizarMatrixBase();
+            gerarProximoSpot();
+            document.addEventListener('keydown', (e) => {
+                if (isLocked && (e.code === 'Space' || e.code === 'Enter')) { e.preventDefault(); generarProximoSpot(); return; }
+                if (!isLocked) {
+                    if (e.key === '1') processarDecisao(0);
+                    if (e.key === '2' && document.getElementById('btn-call').style.display !== 'none') processarDecisao(1);
+                    if (e.key === '3') processarDecisao(2);
+                }
+            });
+        };
+
+        function renderizarMatrixBase() {
+            const container = document.getElementById('poker-matrix'); container.innerHTML = '';
+            for (let r = 0; r < 13; r++) {
+                for (let c = 0; c < 13; c++) {
+                    let label = (r === c) ? RANKS[r] + RANKS[c] : (r < c ? RANKS[r] + RANKS[c] + "s" : RANKS[c] + RANKS[r] + "o");
+                    container.innerHTML += `<div id="cell-${label}" class="flex items-center justify-center h-4.5 bg-slate-900/30 border border-slate-950 text-[7px] text-slate-600 font-poker">${label}</div>`;
+                }
+            }
+        }
+
+        async function gerarProximoSpot() {
+            isLocked = true;
+            document.getElementById('arena-surface').classList.remove('success-flash');
+            document.getElementById('btn-continue').classList.add('hidden');
+            document.getElementById('solver-bars-box').classList.add('hidden');
+            document.getElementById('solver-feedback').className = "bg-slate-950 border border-slate-900 p-3 text-center text-xs text-slate-500 font-poker";
+            document.getElementById('solver-feedback').innerHTML = "Analise o Spot e execute a jogada +EV.";
+
+            ['btn-fold', 'btn-call', 'btn-raise'].forEach(id => {
+                let btn = document.getElementById(id); btn.disabled = true; btn.style.opacity = "0.2"; btn.style.display = "flex";
+            });
+
+            let filterPos = document.getElementById('filter-hero-pos').value;
+            let heroPos = filterPos === 'ANY' ? positionsList[Math.floor(Math.random() * positionsList.length)] : filterPos;
+            let oppPos = positionsList.filter(p => p !== heroPos)[0];
+            let heroPosSolver = heroPos === "UTG" ? "CO" : heroPos;
+            let street = "PREFLOP";
+
+            // Geração de Mão Limpa (Sem duplicação)
+            let r1 = RANKS[Math.floor(Math.random()*13)], r2 = RANKS[Math.floor(Math.random()*13)];
+            let s1 = SUITS[Math.floor(Math.random()*4)], s2 = SUITS[Math.floor(Math.random()*4)];
+            if(r1 === r2 && s1 === s2) s2 = SUITS.filter(s => s !== s1)[0];
+            let hand = [{r:r1, s:s1}, {r:r2, s:s2}];
+
+            let deck = [];
+            RANKS.forEach(r => SUITS.forEach(s => { if(!(r===r1 && s===s1) && !(r===r2 && s===s2)) deck.push({r,s}); }));
+
+            let board = [];
+            if(street === "FLOP") { for(let i=0; i<3; i++) board.push(deck.splice(Math.floor(Math.random()*deck.length),1)[0]); }
+
+            let rIdx1 = RANKS.indexOf(r1), rIdx2 = RANKS.indexOf(r2);
+            let high = Math.min(rIdx1, rIdx2), low = Math.max(rIdx1, rIdx2);
+            let comboStr = high === low ? RANKS[high]+RANKS[low] : (s1 === s2 ? RANKS[high]+RANKS[low]+"s" : RANKS[high]+RANKS[low]+"o");
+
+            // REAL MOTOR MaxEV - CÁLCULO DE EQUIDADE SIMULADO
+            let baseEquity = 0.32; // Mão média vs Range
+            if(['AA','KK','QQ','JJ','AKs','AKo'].includes(comboStr)) baseEquity = 0.78;
+            else if(['TT','99','AQs','AJs','KQs','AQo'].includes(comboStr)) baseEquity = 0.58;
+            else if(s1 === s2 || Math.abs(high-low) === 1) baseEquity = 0.42; // Conectores/Suited
+
+            if(street === "FLOP") {
+                // Adiciona equidade se houver draws simulados no board
+                let flushDraw = board.filter(cb => cb.s === s1).length === 2;
+                if(flushDraw) baseEquity += 0.35;
+            }
+
+            const openSize = 2.2;
+            const threeBetSize = 9.0;
+            const potPre = 4.2;
+
+            // to_call no momento da decisão (defender vs open 2.2)
+            let facingBet = (heroPosSolver === "BB") ? 1.2 : 2.2;
+            let pot = potPre;
+            let raise_to = threeBetSize;
+
+            // Fórmulas Reais de EV: EV = (Fold% * Pot) + (EQ * Pot Ganho) - ((1-EQ) * Investimento)
+            let evFold = 0.00;
+            let evCall = facingBet > 0 ? (baseEquity * (pot)) - ((1 - baseEquity) * facingBet) : (baseEquity * pot);
+            let evRaise = (0.40 * pot) + (baseEquity * (pot * 2.5)) - ((1 - baseEquity) * (pot * 1.5));
+
+            if(facingBet === 0 && street === "PREFLOP") {
+                evCall = -99; // Não existe check/call limp padrão em GTO de abertura
+            }
+
+            // Offset logic and labels for training depend on the solver position mapping.
+            // UI shows heroPos (UTG allowed) but solver uses heroPosSolver.
+            activeSpot = { heroPos: heroPos, oppPos, street: street, hand, board, comboStr, pot, facingBet, evs: [evFold, evCall, evRaise], equity: baseEquity, heroPosSolver: heroPosSolver };
+
+            // Renderizar Tela
+            document.getElementById('board-street').textContent = street;
+            document.getElementById('pot-display').textContent = `POT: ${pot.toFixed(1)} BB`;
+            document.getElementById('matrix-pos-badge').textContent = `HERO: ${heroPos}`;
+            document.getElementById('board-desc').textContent = `${street} • (solv: ${heroPosSolver}) • Posição: ${heroPos} vs ${oppPos} | Mão: ${comboStr}. ` + (facingBet > 0 ? `Oponente apostou ${facingBet} BB.` : `Mesa em Check.`);
+
+            // No modelo pré-flop (defender vs open), facingBet > 0.
+            document.getElementById('lbl-call').textContent = `CALL ${facingBet.toFixed(1)} BB`;
+            document.getElementById('lbl-raise').textContent = `3BET ${raise_to.toFixed(1)} BB`;
+
+            atualizarLayoutMesa();
+
+            ['btn-fold', 'btn-call', 'btn-raise'].forEach(id => {
+                let btn = document.getElementById(id);
+                btn.disabled = false;
+                btn.style.opacity = "1";
+                btn.style.display = "flex";
+            });
+            isLocked = false;
+        }
+
+        function atualizarLayoutMesa() {
+            let bRow = document.getElementById('board-cards-row'); bRow.innerHTML = '';
+            if(activeSpot.board.length === 0) {
+                bRow.innerHTML = `<span class="text-slate-600 font-poker text-[10px] tracking-wider">PREFLOP ACTIVE</span>`;
+            } else {
+                activeSpot.board.forEach(c => {
+                    bRow.innerHTML += `
+                        <div class="card-container">
+                            <div class="card-3d">
+                                <div class="card-back"></div>
+                                <div class="card-front flex flex-col justify-between p-1 font-poker font-black ${SUIT_COLORS[c.s]}">
+                                    <span class="text-xs">${c.r}</span>
+                                    <span class="text-lg self-end">${SUIT_SYMBOLS[c.s]}</span>
+                                </div>
+                            </div>
+                        </div>`;
+                });
+            }
+
+            let seats = document.getElementById('seats-layer'); seats.innerHTML = '';
+            let posCoords = { 'BB': {t:'15%', l:'25%'}, 'UTG': {t:'15%', l:'75%'}, 'CO': {t:'80%', l:'75%'}, 'BTN': {t:'80%', l:'25%'} };
+
+            Object.keys(posCoords).forEach(p => {
+                let isHero = p === activeSpot.heroPos;
+                let isOpp = p === activeSpot.oppPos;
+                let border = isHero ? 'border-emerald-500 shadow-[0_0_15px_rgba(16,185,129,0.2)]' : (isOpp ? 'border-rose-500' : 'border-slate-800');
+                
+                let cards = '';
+                if(isHero) {
+                    cards = `<div class="flex gap-0.5 -mb-2 z-20">
+                        ${activeSpot.hand.map(c => `
+                            <div class="card-container">
+                                <div class="card-3d">
+                                    <div class="card-back"></div>
+                                    <div class="card-front flex flex-col justify-between p-1 font-poker font-black ${SUIT_COLORS[c.s]}">
+                                        <span class="text-xs">${c.r}</span>
+                                        <span class="text-base self-end">${SUIT_SYMBOLS[c.s]}</span>
+                                    </div>
+                                </div>
+                            </div>
+                        `).join('')}
+                    </div>`;
+                }
+
+                seats.innerHTML += `
+                    <div class="absolute -translate-x-1/2 -translate-y-1/2 flex flex-col items-center" style="top:${posCoords[p].t}; left:${posCoords[p].l};">
+                        ${cards}
+                        <div class="bg-slate-950 border ${border} text-slate-200 text-[10px] font-bold px-3 py-1 rounded-lg text-center min-w-[70px]">
+                            ${p}
+                        </div>
+                    </div>`;
+            });
+
+            setTimeout(() => { document.querySelectorAll('.card-container').forEach(e => e.classList.add('is-flipped')); }, 50);
+            
+            // Atualizar Matrix Visual
+            document.querySelectorAll('#poker-matrix div').forEach(el => el.className = "flex items-center justify-center h-4.5 bg-slate-900/20 text-slate-600 border border-slate-950 text-[7px] font-poker");
+            let cell = document.getElementById(`cell-${activeSpot.comboStr}`);
+            if(cell) cell.className = "flex items-center justify-center h-4.5 bg-emerald-500 text-slate-950 font-black scale-110 border border-white/20 rounded shadow-[0_0_10px_#10b981] z-20 font-poker";
+        }
+
+        function processarDecisao(idx) {
+            if (isLocked) return; isLocked = true;
+            
+            let evs = activeSpot.evs;
+            let maxEV = Math.max(...evs);
+            let escolheuCerto = evs[idx] === maxEV || (maxEV - evs[idx] < 0.15);
+
+            appState.total++;
+            if(escolheuCerto) { appState.correct++; appState.streak++; document.getElementById('arena-surface').classList.add('success-flash'); } else { appState.streak = 0; }
+
+            document.getElementById('score-streak').textContent = appState.streak;
+            document.getElementById('score-pct').textContent = `${Math.round((appState.correct/appState.total)*100)}%`;
+
+            let feedback = document.getElementById('solver-feedback');
+            feedback.className = escolheuCerto ? "bg-emerald-950/40 border border-emerald-500/40 p-3 rounded-xl font-display text-center" : "bg-rose-950/40 border border-rose-500/40 p-3 rounded-xl font-display text-center";
+            feedback.innerHTML = escolheuCerto ? `<span class="text-emerald-400 text-xs font-bold">✓ DECISÃO +EV CORRETA</span>` : `<span class="text-rose-400 text-xs font-bold">❌ DECISÃO -EV ERRONEA</span>`;
+
+            ['btn-fold', 'btn-call', 'btn-raise'].forEach(id => { document.getElementById(id).disabled = true; document.getElementById(id).style.opacity = "0.2"; });
+            document.getElementById('btn-continue').classList.remove('hidden');
+            document.getElementById('solver-bars-box').classList.remove('hidden');
+
+            let bars = document.getElementById('solver-bars'); bars.innerHTML = '';
+            let nomes = ["FOLD", activeSpot.facingBet > 0 ? "CALL" : "CHECK", "RAISE/BET"];
+            let cores = ["bg-rose-500", "bg-slate-400", "bg-emerald-500"];
+
+            evs.forEach((ev, i) => {
+                if(ev === -99) return;
+                let displayEV = ev.toFixed(2);
+                bars.innerHTML += `
+                    <div class="bg-slate-950 p-2 rounded-lg border border-slate-900 text-xs">
+                        <div class="flex justify-between font-bold text-[11px]">
+                            <span class="${i===idx?'text-amber-400 font-bold':''}">${nomes[i]}</span>
+                            <span class="${ev >= 0 ? 'text-emerald-400':'text-rose-500'}">EV: ${displayEV}</span>
+                        </div>
+                    </div>`;
+            });
+        }
+    </script>
+</body>
+</html>

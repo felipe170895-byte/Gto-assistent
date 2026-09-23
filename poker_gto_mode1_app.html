@@ -1,0 +1,1140 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>GTO NLHE Mode 1 (Pré-flop)</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    :root { --felt: #0b1a14; }
+    .felt {
+      background:
+        radial-gradient(1200px 500px at 20% 10%, rgba(16,185,129,.12), transparent 55%),
+        radial-gradient(900px 500px at 90% 20%, rgba(245,158,11,.08), transparent 50%),
+        linear-gradient(180deg, #08120e, #0b1a14 40%, #07110d);
+    }
+    .card-face {
+      width: 4.2rem;
+      height: 5.8rem;
+      border-radius: 0.75rem;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      padding: 0.45rem 0.5rem;
+      box-shadow: 0 10px 25px rgba(0,0,0,.35);
+      border: 1px solid rgba(255,255,255,.08);
+      user-select: none;
+    }
+    .card-rank { font-size: 1.25rem; font-weight: 800; line-height: 1; }
+    .card-suit { font-size: 1.15rem; line-height: 1; text-align: right; }
+    .suit-red { color: #ef4444; }
+    .suit-black { color: #0f172a; }
+    .card-white { background: #f8fafc; color: #0f172a; }
+    .mix-track { height: 0.55rem; }
+    .action-best { outline: 2px solid rgba(16,185,129,.7); box-shadow: 0 0 0 4px rgba(16,185,129,.15); }
+  </style>
+</head>
+<body class="min-h-screen felt text-slate-100">
+  <div class="mx-auto max-w-5xl px-4 py-6">
+    <header class="mb-4">
+      <div class="rounded-xl border border-slate-800 bg-slate-900/40 p-4">
+        <h1 class="text-lg font-semibold">GTO NLHE — Modo 1 (offline) • Pré-flop</h1>
+        <p class="mt-1 text-sm text-slate-300">
+          Treino/estudo offline: este app faz <b>fetch</b> de um solver pré-computado via <code>api/query_preflop_gto.php</code>.
+          <span class="block mt-1">Abra via <b>HTTP</b> (ex.: <code>php -S localhost:8000</code>), não <code>file://</code>.</span>
+        </p>
+      </div>
+    </header>
+
+    <div class="grid grid-cols-1 gap-4 md:grid-cols-3">
+      <section class="md:col-span-1 rounded-xl border border-slate-800 bg-slate-900/30 p-4">
+        <h2 class="text-sm font-semibold text-slate-200">Config do spot</h2>
+
+        <div class="mt-3">
+          <label class="block text-xs text-slate-400">Posição do herói</label>
+          <select id="filter-hero-pos" class="mt-1 w-full rounded-lg bg-slate-950 border border-slate-800 p-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-400/60">
+            <option value="ANY">ANY (aleatório)</option>
+            <option value="CO">CO vs UTG open</option>
+            <option value="BTN">BTN vs CO open</option>
+            <option value="BB">BB vs BTN open</option>
+          </select>
+          <div class="mt-1 text-[11px] text-slate-500">Defensor: CO vs UTG, BTN vs CO, BB vs BTN. No RFI o herói é o opener nessa mesma posição.</div>
+        </div>
+
+        <div class="mt-4">
+          <label class="block text-xs text-slate-400">Tipo de spot</label>
+          <select id="spot-type" class="mt-1 w-full rounded-lg bg-slate-950 border border-slate-800 p-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-400/60">
+            <option value="auto">Auto mix (recomendado)</option>
+            <option value="defend">Vilão OPEN (defensor)</option>
+            <option value="rfi">Hero OPEN (RFI)</option>
+          </select>
+          <div class="mt-1 text-[11px] text-slate-500">
+            Defensor: você responde ao OPEN. RFI: você abre primeiro (clique em RAISE).
+          </div>
+        </div>
+
+        <div class="mt-4">
+          <label class="block text-xs text-slate-400">Stack efetivo</label>
+          <select id="filter-stack" class="mt-1 w-full rounded-lg bg-slate-950 border border-slate-800 p-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-400/60">
+            <option value="20">20bb</option>
+            <option value="40">40bb</option>
+            <option value="100" selected>100bb</option>
+            <option value="200">200bb</option>
+          </select>
+          <div class="mt-1 text-[11px] text-slate-500">JSON por stack. 100bb é o fallback se o arquivo ainda não existir.</div>
+        </div>
+
+        <div class="mt-4">
+          <label class="block text-xs text-slate-400">Perfil do OPEN (rangeProfile)</label>
+          <select id="filter-range-profile" class="mt-1 w-full rounded-lg bg-slate-950 border border-slate-800 p-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-400/60">
+            <option value="standard" selected>Standard</option>
+            <option value="tight">Tight</option>
+            <option value="loose">Loose</option>
+          </select>
+          <div class="mt-1 text-[11px] text-slate-500">Escolhe o range do OPEN do vilão (arquivos com sufixo _tight/_loose).</div>
+        </div>
+
+        <div class="mt-4">
+          <button id="btn-generate" class="w-full rounded-lg bg-emerald-500 px-4 py-2 text-sm font-semibold text-emerald-950 hover:bg-emerald-400 disabled:opacity-50" type="button">
+            Gerar spot
+          </button>
+        </div>
+
+        <div class="mt-4 rounded-lg border border-slate-800 bg-slate-950/40 p-3">
+          <div class="flex items-center justify-between">
+            <div>
+              <div class="text-xs text-slate-400">Status</div>
+              <div id="solver-feedback" role="status" aria-live="polite" class="mt-1 text-sm text-slate-200">Pronto.</div>
+            <div class="mt-2 text-[12px] text-slate-400">
+              Arquivos v2: <span id="v2-files-count" class="text-slate-300">—</span>
+            </div>
+            </div>
+            <div class="text-xs text-slate-500 text-right">
+              <div>Modelo: <span id="model-label" class="text-slate-300">Pré-flop</span></div>
+              <div>Open: <span class="text-slate-300">2.2bb</span></div>
+              <div>3bet: <span id="threebet-global-label" class="text-slate-300">6.5/10.5bb</span></div>
+            </div>
+          </div>
+
+          <div class="mt-3 text-xs text-slate-400">
+            Chamadas: <span id="status-calls" class="text-slate-300">0</span>
+            • Sucesso: <span id="status-ok" class="text-slate-300">0</span>
+            • Falhas: <span id="status-err" class="text-slate-300">0</span>
+          </div>
+        </div>
+      </section>
+
+      <section class="md:col-span-2 rounded-xl border border-slate-800 bg-slate-900/30 p-4">
+        <div class="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+          <div>
+            <h2 class="text-sm font-semibold text-slate-200">Spot atual</h2>
+            <div class="mt-2 grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div class="rounded-lg border border-slate-800 bg-slate-950/40 p-3">
+                <div class="text-xs text-slate-400">HERO</div>
+                <div id="matrix-pos-badge" class="mt-1 text-lg font-bold">—</div>
+              </div>
+              <div class="rounded-lg border border-slate-800 bg-slate-950/40 p-3">
+                <div class="text-xs text-slate-400">POT (pré)</div>
+                <div id="pot-display" class="mt-1 text-lg font-bold">—</div>
+              </div>
+            </div>
+
+            <div class="mt-3 rounded-lg border border-slate-800 bg-slate-950/40 p-3">
+              <div class="text-xs text-slate-400">Suas cartas</div>
+              <div id="hero-cards" class="mt-2 flex items-center justify-center gap-3 sm:gap-4" aria-label="Cartas do herói">—</div>
+              <div class="mt-2 text-xs text-slate-500" id="hand-desc">—</div>
+
+              <div class="mt-2 flex flex-wrap gap-2 text-xs">
+                <div class="rounded-full border border-slate-800 bg-slate-950/40 px-2 py-1">
+                  Facing: <span id="facing-pill" class="text-slate-200 font-mono">—</span>
+                </div>
+                <div class="rounded-full border border-slate-800 bg-slate-950/40 px-2 py-1">
+                  3bet: <span id="raise-pill" class="text-slate-200 font-mono">—</span>
+                </div>
+              </div>
+
+              <div class="mt-2 text-xs text-slate-500">Bucket: <span id="hero-class-badge" class="text-slate-200 font-mono">—</span></div>
+              <div class="mt-1 text-xs text-slate-500">Stack: <span id="stack-badge" class="text-slate-200 font-mono">—</span></div>
+              <div class="mt-1 text-xs text-slate-500">Vilão (open) assume posição: <span id="vill-open-pos" class="text-slate-200 font-mono">—</span></div>
+              <div class="mt-1 text-[12px] text-slate-500">Range do OPEN do vilão: <span id="vill-open-range-source" class="text-slate-200 font-mono">—</span></div>
+
+              <div class="mt-3 rounded-lg border border-slate-800 bg-slate-950/40 p-3">
+                <div class="text-xs text-slate-400">Linha do spot</div>
+                <div class="mt-1 text-xs text-slate-500">Origem do raise: <span id="open-from" class="text-slate-200 font-mono">—</span></div>
+
+                <div class="mt-2 flex flex-wrap items-center gap-2" id="flow-diagram" aria-label="Sequência da mão (pré-flop)">
+                  <div id="flow-step-open" class="px-2 py-1 rounded-lg border border-slate-800 bg-slate-950/50 text-xs text-slate-200 font-mono">PRÉ-FLOP: OPEN</div>
+                  <div class="text-slate-500">→</div>
+                  <div id="flow-step-hero" class="px-2 py-1 rounded-lg border border-slate-800 bg-slate-950/50 text-xs text-slate-200 font-mono">DEF</div>
+                  <div class="text-slate-500">→</div>
+                  <div id="flow-step-vill" class="px-2 py-1 rounded-lg border border-slate-800 bg-slate-950/50 text-xs text-slate-200 font-mono">(vilão)</div>
+                  <div class="text-slate-500 hidden" id="flow-arrow-vill">→</div>
+                  <div id="flow-step-terminal" class="px-2 py-1 rounded-lg border border-slate-800 bg-slate-950/50 text-xs text-slate-200 font-mono">(terminal)</div>
+                </div>
+
+                <div class="mt-2 text-sm text-slate-200" id="hand-flow">Clique em FOLD / CALL / 3BET para ver a linha vs o OPEN.</div>
+                <div class="mt-2 text-xs text-slate-500">(Pré-flop: defensor vs open 2.2bb)</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="w-full md:w-80">
+            <div class="text-xs text-slate-400 mb-1">Ações disponíveis</div>
+            <div class="grid grid-cols-1 gap-2">
+              <button id="btn-fold" class="rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-3 text-sm font-semibold disabled:opacity-50 text-left" type="button" disabled>
+                <div class="flex items-center justify-between">
+                  <span class="font-mono" id="lbl-fold">FOLD</span>
+                  <span class="text-[11px] text-rose-200/80" id="mix-fold-btn">—</span>
+                </div>
+              </button>
+              <button id="btn-call" class="rounded-lg border border-sky-500/30 bg-sky-500/10 px-3 py-3 text-sm font-semibold disabled:opacity-50 text-left" type="button" disabled>
+                <div class="flex items-center justify-between">
+                  <span class="font-mono" id="lbl-call">CALL</span>
+                  <span class="text-[11px] text-sky-200/80" id="mix-call-btn">—</span>
+                </div>
+              </button>
+              <button id="btn-raise" class="rounded-lg border border-amber-400/40 bg-amber-400/10 px-3 py-3 text-sm font-semibold disabled:opacity-50 text-left" type="button" disabled>
+                <div class="flex items-center justify-between">
+                  <span class="font-mono" id="lbl-raise">3BET</span>
+                  <span class="text-[11px] text-amber-200/80" id="mix-three-btn">—</span>
+                </div>
+              </button>
+            </div>
+
+            <div class="mt-3 rounded-lg border border-slate-800 bg-slate-950/40 p-3">
+              <div class="text-xs text-slate-400">Recomendação</div>
+              <div class="mt-2 text-sm" id="recommendation">—</div>
+              <div class="mt-2 text-[12px] text-slate-400">EV-gap: <span id="ev-gap" class="font-mono">—</span></div>
+              <div class="mt-2 text-[12px] text-amber-200/90 hidden" id="uncertainty-warning">⚠️ Baixa confiança (std alto e/ou EV-gap baixo).</div>
+            </div>
+          </div>
+        </div>
+
+        <div id="solver-bars-box" class="mt-5">
+          <h2 class="text-sm font-semibold text-slate-200">EV & mistura de estratégia</h2>
+          <div class="mt-3 space-y-3">
+            <div class="rounded-lg border border-slate-800 bg-slate-950/40 p-3">
+              <div class="flex items-center justify-between">
+                <div class="text-sm font-semibold">FOLD</div>
+                <div class="text-xs text-slate-400">
+                  <span id="ev-fold">—</span>
+                  <span class="text-[11px] text-slate-500">(<span id="ev-fold-std">—</span>)</span>
+                </div>
+              </div>
+              <div class="mt-2 mix-track w-full rounded bg-slate-900 overflow-hidden">
+                <div id="bar-fold" class="h-full w-0 bg-rose-500/80"></div>
+              </div>
+              <div class="mt-2 text-xs text-slate-500">Mix: <span id="mix-fold">—</span></div>
+            </div>
+
+            <div class="rounded-lg border border-slate-800 bg-slate-950/40 p-3">
+              <div class="flex items-center justify-between">
+                <div class="text-sm font-semibold">CALL</div>
+                <div class="text-xs text-slate-400">
+                  <span id="ev-call">—</span>
+                  <span class="text-[11px] text-slate-500">(<span id="ev-call-std">—</span>)</span>
+                </div>
+              </div>
+              <div class="mt-2 mix-track w-full rounded bg-slate-900 overflow-hidden">
+                <div id="bar-call" class="h-full w-0 bg-sky-400/80"></div>
+              </div>
+              <div class="mt-2 text-xs text-slate-500">Mix: <span id="mix-call">—</span></div>
+            </div>
+
+            <div class="rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-3">
+              <div class="flex items-center justify-between">
+                <div class="text-sm font-semibold" id="ev-three-title">3BET</div>
+                <div class="text-xs text-slate-400">
+                  <span id="ev-three">—</span>
+                  <span class="text-[11px] text-slate-500">(<span id="ev-three-std">—</span>)</span>
+                </div>
+              </div>
+              <div class="mt-2 mix-track w-full rounded bg-slate-900 overflow-hidden">
+                <div id="bar-three" class="h-full w-0 bg-amber-400/80"></div>
+              </div>
+              <div class="mt-2 text-xs text-slate-500">Mix: <span id="mix-three">—</span></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="mt-4 text-xs text-slate-500">
+          Observação: este modelo é apenas <b>pré-flop</b> (offline) e usa <b>cards</b> + <b>posição</b>.
+          No modo <b>DEFEND</b> você responde ao OPEN do vilão; no modo <b>RFI</b> você abre primeiro.
+          Para flop/turn/river ainda não está no Mode 1.
+        </div>
+      </section>
+    </div>
+  </div>
+
+<script>
+  // ===== Constantes (pré-flop modelado) =====
+  const RANKS = "AKQJT98765432";
+  const SUITS = "shdc";
+  // Mode 1: herói só defende vs OPEN. UTG/SB não são spots deste modo.
+  const defenderPositions = ["CO", "BTN", "BB"];
+  const positionsList = defenderPositions;
+
+  const openSize = 2.2;
+  const THREEBET_OPTIONS = [6.5, 7.5, 9.0, 10.5];
+  let threeBetLabel = `(${THREEBET_OPTIONS[0].toFixed(1)}/${THREEBET_OPTIONS[THREEBET_OPTIONS.length - 1].toFixed(1)}bb)`;
+
+  function computeThreeBetLabel(opts) {
+    const arr = Array.isArray(opts) ? opts : [];
+    if (!arr.length) return threeBetLabel;
+    const nums = arr.map(x => Number(x)).filter(x => Number.isFinite(x));
+    if (!nums.length) return threeBetLabel;
+    // label: (min/max)bb
+    const a = Math.min(...nums);
+    const b = Math.max(...nums);
+    return `(${a.toFixed(1)}/${b.toFixed(1)}bb)`;
+  }
+  const fourbetSize = 21.0;
+  const potPre = 4.2; // SB+BB+Open
+
+  // ===== Estado =====
+  let isLocked = false;
+  let activeSpot = null;
+  let activeStage = 'defend'; // defend | rfi_open
+
+  const UI = {
+    generate: document.getElementById('btn-generate'),
+    feedback: document.getElementById('solver-feedback'),
+    statusCalls: document.getElementById('status-calls'),
+    statusOk: document.getElementById('status-ok'),
+    statusErr: document.getElementById('status-err'),
+
+    posBadge: document.getElementById('matrix-pos-badge'),
+    potDisplay: document.getElementById('pot-display'),
+    heroCards: document.getElementById('hero-cards'),
+    handDesc: document.getElementById('hand-desc'),
+
+    foldBtn: document.getElementById('btn-fold'),
+    callBtn: document.getElementById('btn-call'),
+    threeBtn: document.getElementById('btn-raise'),
+
+    lblFold: document.getElementById('lbl-fold'),
+    lblCall: document.getElementById('lbl-call'),
+    lblRaise: document.getElementById('lbl-raise'),
+
+    recommendation: document.getElementById('recommendation'),
+
+    barsBox: document.getElementById('solver-bars-box'),
+
+    evFold: document.getElementById('ev-fold'),
+    evCall: document.getElementById('ev-call'),
+    evThree: document.getElementById('ev-three'),
+
+    mixFold: document.getElementById('mix-fold'),
+    mixCall: document.getElementById('mix-call'),
+    mixThree: document.getElementById('mix-three'),
+
+    barFold: document.getElementById('bar-fold'),
+    barCall: document.getElementById('bar-call'),
+    barThree: document.getElementById('bar-three'),
+  };
+
+  function setFeedback(html, kind) {
+    UI.feedback.innerHTML = html;
+    if (kind === 'err') {
+      UI.feedback.className = 'mt-1 text-sm text-rose-300';
+    } else if (kind === 'ok') {
+      UI.feedback.className = 'mt-1 text-sm text-emerald-200';
+    } else {
+      UI.feedback.className = 'mt-1 text-sm text-slate-200';
+    }
+  }
+
+  function cardToText(card) {
+    return `${card.r}${card.s}`;
+  }
+
+  function pickRandomHand() {
+    // retorna duas cartas sem duplicar
+    let r1 = RANKS[Math.floor(Math.random()*RANKS.length)];
+    let s1 = SUITS[Math.floor(Math.random()*SUITS.length)];
+
+    let r2 = RANKS[Math.floor(Math.random()*RANKS.length)];
+    let s2 = SUITS[Math.floor(Math.random()*SUITS.length)];
+
+    // evitar carta idêntica
+    if (r1 === r2 && s1 === s2) {
+      s2 = SUITS.split('').reverse().find(x => x !== s1);
+      if (!s2) s2 = 'h';
+    }
+
+    // normalização simples do par: permite pares (r1==r2) com suits diferentes.
+    return [{r: r1, s: s1}, {r: r2, s: s2}];
+  }
+
+  function suitGlyph(s) {
+    return { s: '♠', h: '♥', d: '♦', c: '♣' }[s] || s;
+  }
+
+  function renderHeroCards(cards) {
+    UI.heroCards.innerHTML = '';
+    cards.forEach(c => {
+      const red = (c.s === 'h' || c.s === 'd');
+      const el = document.createElement('div');
+      el.className = 'card-face card-white';
+      el.innerHTML = `
+        <div class="card-rank ${red ? 'suit-red' : 'suit-black'}">${c.r}</div>
+        <div class="card-suit ${red ? 'suit-red' : 'suit-black'}">${suitGlyph(c.s)}</div>
+      `;
+      UI.heroCards.appendChild(el);
+    });
+  }
+
+  function comboLabel(cards) {
+    const rIdx1 = RANKS.indexOf(cards[0].r);
+    const rIdx2 = RANKS.indexOf(cards[1].r);
+    const high = Math.min(rIdx1, rIdx2);
+    const low = Math.max(rIdx1, rIdx2);
+
+    if (cards[0].r === cards[1].r) {
+      return `${cards[0].r}${cards[1].s}`; // fallback
+    }
+
+    const suited = cards[0].s === cards[1].s;
+    return (high === low)
+      ? (RANKS[high] + RANKS[low])
+      : (RANKS[high] + RANKS[low] + (suited ? 's' : 'o'));
+  }
+
+  function updateButtonsEnabled(enabled) {
+    [UI.foldBtn, UI.callBtn, UI.threeBtn].forEach(b => {
+      b.disabled = !enabled;
+      b.style.opacity = enabled ? '1' : '0.5';
+    });
+  }
+
+  function setButtonsForStage() {
+    if (!activeSpot) return;
+
+    // evita “sticky state” da tela anterior (ex.: ação best ficar como CALL)
+    [UI.foldBtn, UI.callBtn, UI.threeBtn].forEach(b => b.classList.remove('action-best'));
+
+    const isRfi = activeSpot.chosenSpotType === 'rfi';
+    if (!isRfi) {
+      // defender stage (sempre todos 3)
+      UI.lblFold.textContent = 'FOLD';
+      UI.lblCall.textContent = `CALL ${activeSpot.facingBet.toFixed(1)} BB`;
+      UI.lblRaise.textContent = `3BET ${threeBetLabel}`;
+
+      updateButtonsEnabled(true);
+      // renderSolverBars (no DEFEND) é quem destaca a melhor ação.
+      return;
+    }
+
+    if (activeStage === 'rfi_open_wait') {
+      // RFI etapa 1: só existe decisão de RAISE (OPEN). Sem mix/EV ainda.
+      UI.lblFold.textContent = 'FOLD';
+      UI.lblCall.textContent = 'CALL';
+      UI.lblRaise.textContent = `RAISE OPEN ${openSize.toFixed(1)}bb`;
+
+      // limpa qualquer “destaque”/mistura que possa sobrar da rodada anterior.
+      if (UI.evFold) UI.evFold.textContent = '—';
+      if (UI.evCall) UI.evCall.textContent = '—';
+      if (UI.evThree) UI.evThree.textContent = '—';
+
+      const mixFoldBtn = document.getElementById('mix-fold-btn');
+      const mixCallBtn = document.getElementById('mix-call-btn');
+      const mixThreeBtn = document.getElementById('mix-three-btn');
+      if (mixFoldBtn) mixFoldBtn.textContent = '—';
+      if (mixCallBtn) mixCallBtn.textContent = '—';
+      if (mixThreeBtn) mixThreeBtn.textContent = '—';
+
+      // nesta etapa, o usuário só pode clicar em RAISE.
+      updateButtonsEnabled(false);
+      UI.threeBtn.disabled = false;
+      UI.threeBtn.style.opacity = '1';
+      return;
+    }
+
+    // rfi_after_threebet: decisão após o 3BET do vilão (fold / call / 4BET mapeado como 3BET)
+    UI.lblFold.textContent = 'FOLD';
+    UI.lblCall.textContent = 'CALL 3BET';
+    UI.lblRaise.textContent = `4BET ${fourbetSize.toFixed(1)}bb`;
+
+    const mixFoldBtn = document.getElementById('mix-fold-btn');
+    const mixCallBtn = document.getElementById('mix-call-btn');
+    const mixThreeBtn = document.getElementById('mix-three-btn');
+    if (mixFoldBtn) mixFoldBtn.textContent = '—';
+    if (mixCallBtn) mixCallBtn.textContent = '—';
+    if (mixThreeBtn) mixThreeBtn.textContent = '—';
+
+    updateButtonsEnabled(true);
+  }
+
+  function resetDiagramToDefaults() {
+    const stepOpen = document.getElementById('flow-step-open');
+    const stepHero = document.getElementById('flow-step-hero');
+    const stepVill = document.getElementById('flow-step-vill');
+    const arrowVill = document.getElementById('flow-arrow-vill');
+    const stepTerminal = document.getElementById('flow-step-terminal');
+
+    if (stepOpen) stepOpen.textContent = 'PRÉ-FLOP: OPEN';
+    if (stepHero) stepHero.textContent = 'DEF';
+    if (stepVill) stepVill.textContent = '(vilão)';
+    if (arrowVill) arrowVill.classList.add('hidden');
+    if (stepTerminal) stepTerminal.textContent = '(terminal)';
+  }
+
+  function showRfiOpenDiagram() {
+    const stepOpen = document.getElementById('flow-step-open');
+    const stepHero = document.getElementById('flow-step-hero');
+    const stepVill = document.getElementById('flow-step-vill');
+    const arrowVill = document.getElementById('flow-arrow-vill');
+    const stepTerminal = document.getElementById('flow-step-terminal');
+
+    if (stepOpen) stepOpen.textContent = `PRÉ-FLOP: HERO OPEN`;
+    if (stepHero) stepHero.textContent = `Vilão responde`;
+    if (stepVill) stepVill.textContent = `(se vilão faz 3BET)`;
+    if (arrowVill) arrowVill.classList.add('hidden');
+    if (stepTerminal) stepTerminal.textContent = `(você decide)`;
+    document.getElementById('hand-flow').textContent = 'Clique em RAISE para abrir a mão (RFI).';
+  }
+
+  function showRfiAfterThreebetDiagram(actionIdx) {
+    // actionIdx: 0 fold | 1 call | 2 3bet
+    const stepOpen = document.getElementById('flow-step-open');
+    const stepHero = document.getElementById('flow-step-hero');
+    const stepVill = document.getElementById('flow-step-vill');
+    const arrowVill = document.getElementById('flow-arrow-vill');
+    const stepTerminal = document.getElementById('flow-step-terminal');
+
+    const actionName = actionLabel(actionIdx);
+
+    if (stepOpen) stepOpen.textContent = `HERO OPEN ${openSize.toFixed(1)}bb`;
+    if (stepHero) stepHero.textContent = `Vilão faz 3BET ${threeBetLabel}`;
+
+    if (actionIdx === 2) {
+      if (arrowVill) arrowVill.classList.remove('hidden');
+      if (stepVill) stepVill.textContent = 'Você: 4BET';
+      if (stepTerminal) stepTerminal.textContent = 'Vilão: fold/call';
+    } else {
+      if (arrowVill) arrowVill.classList.add('hidden');
+      if (stepVill) {
+        if (actionIdx === 0) stepVill.textContent = 'Você: FOLD';
+        else if (actionIdx === 1) stepVill.textContent = 'Você: CALL 3BET';
+        else stepVill.textContent = `Você: ${actionName}`;
+      }
+      if (stepTerminal) stepTerminal.textContent = (actionIdx === 0) ? 'Você folda' : 'Showdown';
+    }
+
+    const lineEl = document.getElementById('hand-flow');
+    if (lineEl) {
+      if (actionIdx === 0) {
+        lineEl.textContent = `FOLD → você desiste vs o 3BET do vilão. (OPEN → 3BET do vilão → FOLD).`;
+      } else if (actionIdx === 1) {
+        lineEl.textContent = `CALL → você paga e vê o showdown. (OPEN → 3BET do vilão → CALL).`;
+      } else {
+        lineEl.textContent = `4BET → você re-raise o 3BET do vilão para ${fourbetSize.toFixed(1)}bb. (OPEN → 3BET(vilão) → 4BET → vilão fold/call).`;
+      }
+    }
+  }
+
+  function showRfiAfterThreebetWaiting() {
+    const stepOpen = document.getElementById('flow-step-open');
+    const stepHero = document.getElementById('flow-step-hero');
+    const stepVill = document.getElementById('flow-step-vill');
+    const arrowVill = document.getElementById('flow-arrow-vill');
+    const stepTerminal = document.getElementById('flow-step-terminal');
+
+    if (stepOpen) stepOpen.textContent = `HERO OPEN ${openSize.toFixed(1)}bb`;
+    if (stepHero) stepHero.textContent = `Vilão faz 3BET ${threeBetLabel}`;
+    if (stepVill) stepVill.textContent = '(você decide)';
+    if (arrowVill) arrowVill.classList.add('hidden');
+    if (stepTerminal) stepTerminal.textContent = '(clique FOLD / CALL / 4BET)';
+
+    document.getElementById('hand-flow').textContent = 'Vilão 3BET. Clique em FOLD / CALL / 4BET.';
+  }
+
+  function scaleBar(barEl, value, maxAbs) {
+    // value pode ser negativo; barras só indicam magnitude (por cor já diferencia)
+    const pct = maxAbs <= 1e-12 ? 0 : Math.min(100, Math.round((Math.abs(value)/maxAbs)*100));
+    barEl.style.width = pct + '%';
+  }
+
+  function formatEv(v) {
+    const s = Number(v);
+    const sign = s > 0 ? '+' : '';
+    return `${sign}${s.toFixed(3)}bb`;
+  }
+
+  function renderRecommendation(data) {
+    const evs = data.evs; // [fold, call, three]
+    const mix = data.strategy; // [fold, call, three]
+
+    // maior EV
+    const idxEv = evs.reduce((best, x, idx) => (x > evs[best] ? idx : best), 0);
+    const idxMix = mix.reduce((best, x, idx) => (x > mix[best] ? idx : best), 0);
+
+    const actionName = i => actionLabel(i);
+
+    UI.recommendation.innerHTML = `
+      <div class="text-slate-200"><b>Maior EV:</b> ${actionName(idxEv)} (${formatEv(evs[idxEv])})</div>
+      <div class="text-slate-400 mt-1"><b>Maior mix:</b> ${actionName(idxMix)} (${(mix[idxMix]*100).toFixed(0)}%)</div>
+    `;
+  }
+
+  function renderSolverBars(data) {
+    const evs = data.evs;
+    const mix = data.strategy;
+
+    const maxAbs = Math.max(Math.abs(evs[0]), Math.abs(evs[1]), Math.abs(evs[2]), 1e-9);
+
+    UI.evFold.textContent = formatEv(evs[0]);
+    UI.evCall.textContent = formatEv(evs[1]);
+    UI.evThree.textContent = formatEv(evs[2]);
+
+    const evsStd = Array.isArray(data.evs_std) ? data.evs_std : null;
+    if (evsStd && evsStd.length >= 3) {
+      const evFoldStd = document.getElementById('ev-fold-std');
+      const evCallStd = document.getElementById('ev-call-std');
+      const evThreeStd = document.getElementById('ev-three-std');
+      if (evFoldStd) evFoldStd.textContent = evsStd[0].toFixed(3);
+      if (evCallStd) evCallStd.textContent = evsStd[1].toFixed(3);
+      if (evThreeStd) evThreeStd.textContent = evsStd[2].toFixed(3);
+    }
+
+    // Aviso visual de baixa confiança (z-score com std + EV-gap)
+    const warnEl = document.getElementById('uncertainty-warning');
+    const evGapEl = document.getElementById('ev-gap');
+
+    const stds = evsStd || [0, 0, 0];
+    const maxAbsEv = Math.max(Math.abs(evs[0] || 0), Math.abs(evs[1] || 0), Math.abs(evs[2] || 0), 1e-9);
+
+    // melhor vs 2ª melhor EV (assume EVs numéricas)
+    const idxBest = evs.reduce((best, x, idx) => (x > evs[best] ? idx : best), 0);
+    const candidates = [0, 1, 2].filter(i => i !== idxBest);
+    const idxSecond = (evs[candidates[0]] >= evs[candidates[1]]) ? candidates[0] : candidates[1];
+
+    const evBest = Number(evs[idxBest]) || 0;
+    const evSecond = Number(evs[idxSecond]) || 0;
+    const evGap = evBest - evSecond;
+
+    if (evGapEl) evGapEl.textContent = formatEv(evGap);
+
+    // z = gap / sqrt(std_best^2 + std_second^2)
+    const sBest = Math.abs(Number(stds[idxBest]) || 0);
+    const sSecond = Math.abs(Number(stds[idxSecond]) || 0);
+    const sigmaComb = Math.sqrt(sBest * sBest + sSecond * sSecond);
+    const z = evGap / Math.max(sigmaComb, 1e-9);
+
+    const maxStd = Math.max(Math.abs(stds[0] || 0), Math.abs(stds[1] || 0), Math.abs(stds[2] || 0));
+    const relStd = maxStd / maxAbsEv;
+    const highUncertainty = maxStd >= 0.25 || relStd >= 0.35;
+
+    // Threshold empírico: z<1 indica que o “gap” é menor do que 1 desvio combinado.
+    const lowConfidence = (z < 1.0) || highUncertainty;
+
+    if (warnEl) {
+      warnEl.classList.toggle('hidden', !lowConfidence);
+    }
+
+    UI.mixFold.textContent = (mix[0]*100).toFixed(0) + '%';
+    UI.mixCall.textContent = (mix[1]*100).toFixed(0) + '%';
+    UI.mixThree.textContent = (mix[2]*100).toFixed(0) + '%';
+
+    const mixFoldBtn = document.getElementById('mix-fold-btn');
+    const mixCallBtn = document.getElementById('mix-call-btn');
+    const mixThreeBtn = document.getElementById('mix-three-btn');
+    if (mixFoldBtn) mixFoldBtn.textContent = UI.mixFold.textContent;
+    if (mixCallBtn) mixCallBtn.textContent = UI.mixCall.textContent;
+    if (mixThreeBtn) mixThreeBtn.textContent = UI.mixThree.textContent;
+
+    scaleBar(UI.barFold, evs[0], maxAbs);
+    scaleBar(UI.barCall, evs[1], maxAbs);
+    scaleBar(UI.barThree, evs[2], maxAbs);
+
+    // Highlight da ação de maior EV
+    [UI.foldBtn, UI.callBtn, UI.threeBtn].forEach(b => b.classList.remove('action-best'));
+    const idxEv = evs.reduce((best, x, idx) => (x > evs[best] ? idx : best), 0);
+    [UI.foldBtn, UI.callBtn, UI.threeBtn][idxEv].classList.add('action-best');
+
+    renderRecommendation(data);
+  }
+
+  function actionLabel(i) {
+    // No modo RFI, após o vilão fazer 3BET, a terceira ação corresponde a 4BET (re-raise).
+    if (activeSpot && activeSpot.chosenSpotType === 'rfi' && activeStage === 'rfi_after_threebet' && i === 2) {
+      return '4BET';
+    }
+    return i === 0 ? 'FOLD' : i === 1 ? 'CALL' : '3BET';
+  }
+
+  function villainOpenPosForHero(heroPosSolver) {
+    if (heroPosSolver === 'CO') return 'UTG';
+    if (heroPosSolver === 'BTN') return 'CO';
+    return 'BTN';
+  }
+
+  function normalizeHeroPosForSolver(heroPos) {
+    // Mode 1 só modela defensor: CO/BTN/BB.
+    if (heroPos === 'SB') return 'BB';
+    if (heroPos === 'UTG') return 'CO';
+    if (defenderPositions.includes(heroPos)) return heroPos;
+    return 'CO';
+  }
+
+  function getFacingBet(heroPosSolver) {
+    const heroPosted = (heroPosSolver === 'BB') ? 1.0 : 0.0;
+    return openSize - heroPosted;
+  }
+
+  async function gerarProximoSpot() {
+    if (isLocked) return;
+    isLocked = true;
+    UI.generate.disabled = true;
+
+    // decide tipo de spot (auto/defend/rfi)
+    const spotTypeSel = document.getElementById('spot-type');
+    const spotTypeMode = spotTypeSel ? spotTypeSel.value : 'auto';
+    let chosenSpotType = spotTypeMode;
+    if (spotTypeMode === 'auto') {
+      chosenSpotType = (Math.random() < 0.5) ? 'defend' : 'rfi';
+    }
+
+    // activeStage controla a etapa visual + quais botões fazem sentido.
+    // defend: você responde FOLD/CALL/3BET ao OPEN do vilão.
+    // rfi_open_wait: hero abre (apenas mostra RAISE).
+    // rfi_after_threebet: após o vilão fazer o raise, hero decide FOLD/CALL/3BET.
+    activeStage = (chosenSpotType === 'rfi') ? 'rfi_open_wait' : 'defend';
+
+    // reset UI
+    // No RFI a EV só vale depois do 3BET do vilão. Esconde o painel na etapa OPEN.
+    if (chosenSpotType === 'rfi') {
+      UI.barsBox.classList.add('hidden');
+    } else {
+      UI.barsBox.classList.remove('hidden');
+    }
+    UI.recommendation.textContent = '—';
+    const warnElReset = document.getElementById('uncertainty-warning');
+    if (warnElReset) warnElReset.classList.add('hidden');
+    UI.evFold.textContent = '—';
+    UI.evCall.textContent = '—';
+    UI.evThree.textContent = '—';
+
+    const evFoldStd = document.getElementById('ev-fold-std');
+    const evCallStd = document.getElementById('ev-call-std');
+    const evThreeStd = document.getElementById('ev-three-std');
+    if (evFoldStd) evFoldStd.textContent = '—';
+    if (evCallStd) evCallStd.textContent = '—';
+    if (evThreeStd) evThreeStd.textContent = '—';
+    UI.mixFold.textContent = '—';
+    UI.mixCall.textContent = '—';
+    UI.mixThree.textContent = '—';
+
+    // também zera os labels de mix nos botões (evita “sticky state”)
+    const mixFoldBtn = document.getElementById('mix-fold-btn');
+    const mixCallBtn = document.getElementById('mix-call-btn');
+    const mixThreeBtn = document.getElementById('mix-three-btn');
+    if (mixFoldBtn) mixFoldBtn.textContent = '—';
+    if (mixCallBtn) mixCallBtn.textContent = '—';
+    if (mixThreeBtn) mixThreeBtn.textContent = '—';
+
+    [UI.foldBtn, UI.callBtn, UI.threeBtn].forEach(b => b.classList.remove('action-best'));
+
+    UI.barFold.style.width = '0%';
+    UI.barCall.style.width = '0%';
+    UI.barThree.style.width = '0%';
+
+    // limpa quaisquer “mix%”/destaques que possam vir de um spot DEFEND anterior
+    UI.foldBtn.classList.remove('action-best');
+    UI.callBtn.classList.remove('action-best');
+    UI.threeBtn.classList.remove('action-best');
+    const mixFoldBtnReset = document.getElementById('mix-fold-btn');
+    const mixCallBtnReset = document.getElementById('mix-call-btn');
+    const mixThreeBtnReset = document.getElementById('mix-three-btn');
+    if (mixFoldBtnReset) mixFoldBtnReset.textContent = '—';
+    if (mixCallBtnReset) mixCallBtnReset.textContent = '—';
+    if (mixThreeBtnReset) mixThreeBtnReset.textContent = '—';
+
+    updateButtonsEnabled(false);
+
+    UI.recommendation.textContent = 'Carregando solver...';
+
+    const filterPos = document.getElementById('filter-hero-pos').value;
+    const stackSel = document.getElementById('filter-stack');
+    const allowedStacks = [20, 40, 100, 200];
+    let selectedStack = parseInt(stackSel ? stackSel.value : '100', 10);
+    if (!allowedStacks.includes(selectedStack)) selectedStack = 100;
+    let heroPosDisplay = filterPos === 'ANY'
+      ? defenderPositions[Math.floor(Math.random()*defenderPositions.length)]
+      : filterPos;
+
+    let heroPosSolver = normalizeHeroPosForSolver(heroPosDisplay);
+    if (!defenderPositions.includes(heroPosSolver)) {
+      heroPosSolver = 'CO';
+    }
+    heroPosDisplay = heroPosSolver;
+
+    // Convenção: no modo DEFEND você é o defensor vs OPEN.
+    // No modo RFI (placeholder), mantemos a mesma função só para labels de posição.
+    const villainOpenPos = villainOpenPosForHero(heroPosSolver);
+    const oppPos = villainOpenPos;
+
+    // mão
+    const cards = pickRandomHand();
+    renderHeroCards(cards);
+
+    const face = getFacingBet(heroPosSolver);
+
+    UI.posBadge.textContent = (chosenSpotType === 'rfi')
+      ? `HERO OPEN (RFI) em ${heroPosDisplay}`
+      : `${heroPosDisplay} vs ${villainOpenPos} open`;
+
+    UI.potDisplay.textContent = `POT: ${potPre.toFixed(1)} BB`;
+
+    if (chosenSpotType === 'rfi') {
+      UI.handDesc.textContent = `PRÉ-FLOP MODE 1 • Você é o agressor inicial (RFI) em ${heroPosDisplay}. Linha: OPEN → Vilão 3BET → decisão (FOLD / CALL / 4BET). Mão: ${comboLabel(cards)}.`;
+    } else {
+      UI.handDesc.textContent = `PRÉ-FLOP MODE 1 • Você é o DEFENSOR em ${heroPosDisplay} vs OPEN de ${villainOpenPos} (2.2bb). Ações: FOLD / CALL / 3BET. Mão: ${comboLabel(cards)}.`;
+    }
+    document.getElementById('hero-class-badge').textContent = '...';
+    const stackBadge = document.getElementById('stack-badge');
+    if (stackBadge) stackBadge.textContent = `${selectedStack}bb`;
+    const villEl = document.getElementById('vill-open-pos');
+    if (villEl) villEl.textContent = villainOpenPos;
+
+    // Explicação clara de de onde vem o raise (open) no Mode 1
+    const openFromEl = document.getElementById('open-from');
+    if (openFromEl) {
+      if (chosenSpotType === 'rfi') {
+        openFromEl.textContent = 'OPEN do herói (RFI): 2.2bb.';
+      } else {
+        openFromEl.textContent = 'OPEN fixo do vilão: 2.2bb (está no modelo do solver).';
+      }
+    }
+
+    const villRangeSourceEl = document.getElementById('vill-open-range-source');
+    if (villRangeSourceEl) {
+      villRangeSourceEl.textContent = `Open pos: ${villainOpenPos} (range 169-buckets)`;
+    }
+
+    // Pílulas (ajuda visual)
+    if (chosenSpotType === 'rfi') {
+      // No placeholder RFI ainda não existe EV; apenas alinhar labels/fluxo.
+      document.getElementById('facing-pill').textContent = `OPEN ${openSize.toFixed(1)}bb`;
+      document.getElementById('raise-pill').textContent = `depois: vs 3BET`;
+
+      UI.lblFold.textContent = 'FOLD';
+      UI.lblCall.textContent = `CALL`;
+      UI.lblRaise.textContent = `RAISE OPEN ${openSize.toFixed(1)}bb`;
+      const evThreeTitle = document.getElementById('ev-three-title');
+      if (evThreeTitle) evThreeTitle.textContent = '3BET (depois)';
+    } else {
+      const facing = getFacingBet(heroPosSolver);
+      document.getElementById('facing-pill').textContent = `${facing.toFixed(1)} BB to call`;
+      document.getElementById('raise-pill').textContent = `3BET ${threeBetLabel}`;
+
+      UI.lblFold.textContent = 'FOLD';
+      UI.lblCall.textContent = `CALL ${face.toFixed(1)} BB`;
+      UI.lblRaise.textContent = `3BET ${threeBetLabel}`;
+      const evThreeTitle = document.getElementById('ev-three-title');
+      if (evThreeTitle) evThreeTitle.textContent = '3BET';
+    }
+
+    // estado
+    activeSpot = {
+      heroPos: heroPosDisplay,
+      heroPosSolver,
+      oppPos,
+      cards,
+      facingBet: face,
+      chosenSpotType,
+      effectiveStack: selectedStack,
+      evs: [0,0,0],
+      strategy: [1/3,1/3,1/3],
+      source_mode: null,
+    };
+
+    if (chosenSpotType === 'rfi') {
+      // Start diagram in HERO OPEN stage and only enable RAISE (OPEN).
+      resetDiagramToDefaults();
+      showRfiOpenDiagram();
+      setButtonsForStage();
+
+      // Hide defender-only villain-open range widgets.
+      const villPosSpan = document.getElementById('vill-open-pos');
+      const villRangeSpan = document.getElementById('vill-open-range-source');
+      if (villPosSpan && villPosSpan.parentElement) villPosSpan.parentElement.style.display = 'none';
+      if (villRangeSpan && villRangeSpan.parentElement) villRangeSpan.parentElement.style.display = 'none';
+    } else {
+      // Volta o diagrama/labels para o DEFEND (defensor vs OPEN).
+      resetDiagramToDefaults();
+      document.getElementById('hand-flow').textContent = 'Clique em FOLD / CALL / 3BET para ver a linha vs o OPEN.';
+
+      const villPosSpan = document.getElementById('vill-open-pos');
+      const villRangeSpan = document.getElementById('vill-open-range-source');
+      if (villPosSpan && villPosSpan.parentElement) villPosSpan.parentElement.style.display = '';
+      if (villRangeSpan && villRangeSpan.parentElement) villRangeSpan.parentElement.style.display = '';
+    }
+
+    const calls = parseInt(UI.statusCalls.textContent, 10);
+    UI.statusCalls.textContent = (isNaN(calls) ? 0 : calls) + 1;
+
+    UI.barsBox.scrollIntoView({behavior:'smooth', block:'nearest'});
+
+    // Atualiza diagnóstico v2 (sem travar a geração)
+    try {
+      const DIAG_URL = (window.location.protocol === 'file:')
+        ? 'http://localhost:8000/api/status_mode1_v2.php'
+        : new URL('/api/status_mode1_v2.php', window.location.origin).toString();
+
+      fetch(DIAG_URL)
+        .then(r => r.json())
+        .then(d => {
+          const el = document.getElementById('v2-files-count');
+          if (!el || !d) return;
+          el.textContent = `${d.v2_files_existing}/${d.v2_files_total}`;
+        })
+        .catch(() => {});
+    } catch (_) {}
+
+    setFeedback('Rodando GTO pré-flop offline...');
+    document.getElementById('hand-flow').textContent = 'Rodando solver… escolha aparecerá quando terminar.';
+
+    try {
+      const API_URL = (window.location.protocol === 'file:')
+        ? 'http://localhost:8000/api/query_preflop_gto.php'
+        : new URL('/api/query_preflop_gto.php', window.location.origin).toString();
+      const heroCardsStr = [
+        `${cards[0].r}${cards[0].s}`,
+        `${cards[1].r}${cards[1].s}`
+      ];
+
+      const resp = await fetch(API_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json; charset=utf-8' },
+        body: JSON.stringify({
+          heroPos: heroPosSolver,
+          heroCards: heroCardsStr,
+          villOpenPos: villainOpenPos,
+          spotType: chosenSpotType === 'rfi' ? 'rfi' : 'defend',
+          effectiveStack: selectedStack,
+          rangeProfile: (document.getElementById('filter-range-profile')?.value || 'standard')
+        })
+      });
+
+      if (!resp.ok) {
+        const txt = await resp.text().catch(() => '');
+        throw new Error(`HTTP ${resp.status} ${resp.statusText}${txt ? ' • ' + txt : ''}`);
+      }
+
+      const data = await resp.json();
+      if (data.error) throw new Error(String(data.error));
+
+      if (data.source_mode === 'legacy') {
+        setFeedback('Aviso: usando modo LEGACY (open do vilão não ajusta a range). Gere os novos JSONs .json', 'err');
+      }
+
+      if (data.source_mode === 'rfi_placeholder') {
+        setFeedback(data.warning || 'RFI placeholder: sem EV/estratégia ainda. Gere os JSONs com mode1_generate_rfi_v2.py.', 'err');
+      }
+
+      // data: {hero_class, evs:[fold,call,three], strategy:[fold,call,three]}
+      activeSpot.evs = data.evs;
+      activeSpot.evs_std = Array.isArray(data.evs_std) ? data.evs_std : [0, 0, 0];
+      activeSpot.strategy = data.strategy;
+      activeSpot.source_mode = data.source_mode || null;
+      document.getElementById('hero-class-badge').textContent = data.hero_class || '—';
+      const stackUsed = data.effective_stack_used != null ? data.effective_stack_used : selectedStack;
+      const stackBadgeAfter = document.getElementById('stack-badge');
+      if (stackBadgeAfter) {
+        const src = data.source_file ? ` • ${data.source_file}` : '';
+        stackBadgeAfter.textContent = `${stackUsed}bb${src}`;
+      }
+
+      // Label do 3BET baseado no grid interno do solver (contrato externo continua como 1 ação: "threebet")
+      if (Array.isArray(data.threebet_options) && data.threebet_options.length) {
+        threeBetLabel = computeThreeBetLabel(data.threebet_options);
+        const globalLabel = document.getElementById('threebet-global-label');
+        if (globalLabel) globalLabel.textContent = threeBetLabel;
+      }
+
+      // Atualiza rótulos do DEFEND que dependem do label
+      if (chosenSpotType !== 'rfi') {
+        const raisePill = document.getElementById('raise-pill');
+        if (raisePill) raisePill.textContent = `3BET ${threeBetLabel}`;
+        if (UI.lblRaise) UI.lblRaise.textContent = `3BET ${threeBetLabel}`;
+      }
+
+      // Atualiza range/pos do vilão apenas no modo DEFEND
+      const villRangeSourceEl = document.getElementById('vill-open-range-source');
+      if (villRangeSourceEl && chosenSpotType !== 'rfi') {
+        const src = data.source_file ? ` • JSON: ${data.source_file}` : '';
+        villRangeSourceEl.textContent = `Open pos: ${data.vill_open_pos || villainOpenPos} (range 169-buckets)${src}`;
+      }
+
+      if (chosenSpotType !== 'rfi') {
+        // Render de barras depende de EV/strategy, mas o label de 3BET foi atualizado acima.
+        // (EV-gap + std já são derivados em renderSolverBars)
+        renderSolverBars(data);
+        setFeedback('GTO pronto. Escolha a melhor ação para treinar. ✅', 'ok');
+        updateButtonsEnabled(true);
+      } else {
+        // RFI: o diagrama/labels usam threeBetLabel no stage após 3BET do vilão.
+        setButtonsForStage();
+        if (data.source_mode === 'rfi_v2') {
+          setFeedback('RFI pronto. Clique em RAISE OPEN; EV aparece depois do 3BET do vilão. ✅', 'ok');
+        } else {
+          setFeedback(data.warning || 'RFI placeholder: fluxo por stage sem EV. ✅', 'ok');
+        }
+      }
+
+      const ok = parseInt(UI.statusOk.textContent, 10);
+      UI.statusOk.textContent = (isNaN(ok) ? 0 : ok) + 1;
+
+    } catch (e) {
+      console.error(e);
+      setFeedback('Falha no solver: ' + (e && e.message ? e.message : String(e)), 'err');
+
+      const err = parseInt(UI.statusErr.textContent, 10);
+      UI.statusErr.textContent = (isNaN(err) ? 0 : err) + 1;
+
+      // manter botões desabilitados
+      updateButtonsEnabled(false);
+      UI.recommendation.textContent = '—';
+      const warnElErr = document.getElementById('uncertainty-warning');
+      if (warnElErr) warnElErr.classList.add('hidden');
+    } finally {
+      isLocked = false;
+      UI.generate.disabled = false;
+    }
+  }
+
+  function handleAction(actionIdx) {
+    // antes de atualizar a linha, zera o diagrama
+    if (!activeSpot) return;
+
+    resetDiagramToDefaults();
+
+    const evs = activeSpot.evs;
+    const facing = activeSpot.facingBet;
+
+    const isRfi = activeSpot.chosenSpotType === 'rfi';
+    const isPlaceholderRfi = activeSpot.source_mode === 'rfi_placeholder';
+    const hasRfiSolver = isRfi && activeSpot.source_mode === 'rfi_v2';
+
+    // Na etapa OPEN do RFI nunca destacar CALL/FOLD (EV só existe vs 3BET).
+    if (isRfi && activeStage === 'rfi_open_wait') {
+      [UI.foldBtn, UI.callBtn, UI.threeBtn].forEach(b => b.classList.remove('action-best'));
+      const mixFoldBtn2 = document.getElementById('mix-fold-btn');
+      const mixCallBtn2 = document.getElementById('mix-call-btn');
+      const mixThreeBtn2 = document.getElementById('mix-three-btn');
+      if (mixFoldBtn2) mixFoldBtn2.textContent = '—';
+      if (mixCallBtn2) mixCallBtn2.textContent = '—';
+      if (mixThreeBtn2) mixThreeBtn2.textContent = '—';
+    }
+
+    let actionName = actionLabel(actionIdx);
+    // em RFI open, ação válida é apenas RAISE (OPEN)
+    if (isRfi && activeStage === 'rfi_open_wait') {
+      if (actionIdx === 2) actionName = 'RAISE (OPEN)';
+    }
+
+    const ev = (evs && evs.length >= 3) ? evs[actionIdx] : 0;
+
+    const lineEl = document.getElementById('hand-flow');
+
+    const stepOpen = document.getElementById('flow-step-open');
+    const stepHero = document.getElementById('flow-step-hero');
+    const stepVill = document.getElementById('flow-step-vill');
+    const arrowVill = document.getElementById('flow-arrow-vill');
+    const stepTerminal = document.getElementById('flow-step-terminal');
+
+    if (isRfi && activeStage === 'rfi_open_wait') {
+      UI.recommendation.innerHTML = `
+        <div class="text-slate-200"><b>Você escolheu:</b> ${actionName}</div>
+      `;
+    } else {
+      UI.recommendation.innerHTML = `
+        <div class="text-slate-200"><b>Você escolheu:</b> ${actionName}</div>
+        <div class="text-slate-400 mt-1">EV estimado: ${formatEv(ev)}</div>
+      `;
+    }
+
+    // default: esconde branch do vilão (e 4BET)
+    if (stepVill) stepVill.textContent = '(vilão)';
+    if (arrowVill) arrowVill.classList.add('hidden');
+
+    if (isRfi) {
+      // RFI placeholder: o fluxo muda por stage.
+      if (activeStage === 'rfi_open_wait') {
+        // primeira decisão: apenas RAISE (OPEN) do herói
+        if (actionIdx !== 2) {
+          if (stepTerminal) stepTerminal.textContent = '(clique em RAISE)';
+          if (lineEl) lineEl.textContent = 'No RFI, a primeira ação é RAISE (OPEN).';
+          // garante que a UI não “pareça” que CALL/FOLD é a melhor opção
+          return;
+        }
+
+        showRfiOpenDiagram();
+        activeStage = 'rfi_after_threebet';
+        setButtonsForStage();
+        showRfiAfterThreebetWaiting();
+
+        if (hasRfiSolver && Array.isArray(activeSpot.evs) && Array.isArray(activeSpot.strategy)) {
+          UI.barsBox.classList.remove('hidden');
+          const evThreeTitle = document.getElementById('ev-three-title');
+          if (evThreeTitle) evThreeTitle.textContent = '4BET';
+          renderSolverBars({
+            evs: activeSpot.evs,
+            strategy: activeSpot.strategy,
+            evs_std: activeSpot.evs_std || [0, 0, 0],
+          });
+        } else if (isPlaceholderRfi) {
+          UI.recommendation.innerHTML = `
+            <div class="text-slate-200"><b>Você escolheu:</b> RAISE (OPEN)</div>
+            <div class="text-slate-400 mt-1">Sem EV ainda (gere os JSONs RFI).</div>
+          `;
+        }
+        return;
+      }
+
+      // rfi_after_threebet: agora o herói decide fold/call/4bet
+      showRfiAfterThreebetDiagram(actionIdx);
+      return;
+    }
+
+    if (actionIdx === 0) {
+      // para FOLD/CALL não mostramos ramificação de 4BET do vilão
+      if (arrowVill) arrowVill.classList.add('hidden');
+      if (stepVill) stepVill.textContent = '';
+
+      if (stepOpen) stepOpen.textContent = `OPEN 2.2bb`;
+      if (stepHero) stepHero.textContent = `FOLD (def)`;
+      if (stepVill) stepVill.textContent = '';
+      if (stepTerminal) stepTerminal.textContent = 'Open ganha pote';
+      lineEl.textContent = `FOLD → você cede para o OPEN. (OPEN 2.2bb → FOLD).`;
+    } else if (actionIdx === 1) {
+      // para CALL não mostramos ramificação de 4BET do vilão
+      if (arrowVill) arrowVill.classList.add('hidden');
+      if (stepVill) stepVill.textContent = '';
+
+      if (stepOpen) stepOpen.textContent = `OPEN 2.2bb`;
+      if (stepHero) stepHero.textContent = `CALL ${facing.toFixed(1)}bb`;
+      if (stepTerminal) stepTerminal.textContent = 'Showdown';
+      lineEl.textContent = `CALL → você paga ${facing.toFixed(1)}bb para ver showdown. (OPEN → CALL).`;
+    } else {
+      if (stepOpen) stepOpen.textContent = `OPEN 2.2bb`;
+      if (stepHero) stepHero.textContent = `3BET ${threeBetLabel}`;
+      if (arrowVill) arrowVill.classList.remove('hidden');
+      if (stepVill) stepVill.textContent = 'Vilão: fold/call ou 4BET';
+      // seta o terminal para deixar explícito que 4BET leva à resposta fold/call
+      if (stepTerminal) stepTerminal.textContent = 'Se 4BET: defensor fold/call';
+      lineEl.textContent = `3BET → você re-raise o OPEN para ${threeBetLabel}. (OPEN → 3BET → vilão fold/call/4BET). Se 4BET, o defensor responde fold/call.`;
+    }
+  }
+
+  UI.generate.addEventListener('click', gerarProximoSpot);
+  UI.foldBtn.addEventListener('click', () => handleAction(0));
+  UI.callBtn.addEventListener('click', () => handleAction(1));
+  UI.threeBtn.addEventListener('click', () => handleAction(2));
+
+  // primeira renderização opcional
+  // gerarProximoSpot();
+</script>
+</body>
+</html>

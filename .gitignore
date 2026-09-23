@@ -1,0 +1,49 @@
+gitignore
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# venv
+.venv/
+venv/
+
+# Logs
+*.log
+
+# Temporários
+*.tmp
+.DS_Store
+
+# Cache de equity (regenerável)
+storage/equity_cache/
+storage/equity_cache_*/
+
+# (Opcional) bancos
+*.sqlite
+*.dbgitignore
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# venv
+.venv/
+venv/
+
+# Logs
+*.log
+
+# Temporários
+*.tmp
+.DS_Store
+
+# Cache de equity (regenerável)
+storage/equity_cache/
+storage/equity_cache_*/
+
+# (Opcional) bancos
+*.sqlite
+*.db
