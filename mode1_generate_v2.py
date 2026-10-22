@@ -9,6 +9,7 @@ STORAGE_DIR = os.path.join(ROOT_DIR, "storage")
 
 HERO_POS_LIST = ["CO", "BTN", "BB"]
 VILL_OPEN_LIST = ["UTG", "CO", "BTN"]
+DEFAULT_OPEN_SIZE = 2.2
 
 
 def run_cmd(cmd: list[str], dry_run: bool) -> None:
@@ -17,6 +18,13 @@ def run_cmd(cmd: list[str], dry_run: bool) -> None:
         return
     print("[run] " + " ".join(cmd))
     subprocess.check_call(cmd)
+
+
+def open_suffix(open_size: float) -> tuple[str, float]:
+    x = round(float(open_size), 1)
+    if abs(x - DEFAULT_OPEN_SIZE) < 1e-9:
+        return "", x
+    return f"_open{x:.1f}bb", x
 
 
 def main() -> None:
@@ -30,7 +38,11 @@ def main() -> None:
     ap.add_argument("--evSeedStep", type=int, default=10007, help="Seed step between EV replicates")
     ap.add_argument("--rakePct", type=float, default=0.0, help="Rake as a fraction of showdown pot (default 0 = disabled)")
     ap.add_argument("--rakeCap", type=float, default=0.0, help="Rake cap in bb (<=0 disables cap)")
-    ap.add_argument("--rangeProfile", default="standard", choices=["tight", "standard", "loose"], help="Static OPEN range profile")
+    ap.add_argument(
+        "--rangeProfile", default="standard", choices=["tight", "standard", "loose"], help="Static OPEN range profile"
+    )
+
+    ap.add_argument("--openSizes", type=str, default="2.2", help="Comma-separated open sizes in bb (default 2.2)")
 
     ap.add_argument("--smallStackThreshold", type=float, default=20.0, help="Depth (bb) threshold treated as 'small' for extra equity/iters precision")
     ap.add_argument("--itersSmall", type=int, default=4000, help="CFR iterations for small stacks")
@@ -56,7 +68,7 @@ def main() -> None:
 
     os.makedirs(STORAGE_DIR, exist_ok=True)
 
-    stacks = []
+    stacks: list[float] = []
     for x in str(args.stacks).split(","):
         x = x.strip()
         if not x:
@@ -66,72 +78,91 @@ def main() -> None:
     if not stacks:
         raise SystemExit("--stacks is empty")
 
+    open_sizes: list[float] = []
+    for x in str(args.openSizes).split(","):
+        x = x.strip()
+        if not x:
+            continue
+        open_sizes.append(round(float(x), 1))
+
+    if not open_sizes:
+        raise SystemExit("--openSizes is empty")
+
     missing = 0
     total = 0
 
     range_profile = args.rangeProfile
 
-    for hero_pos in HERO_POS_LIST:
-        for vill_open_pos in VILL_OPEN_LIST:
-            for stack_bbs in stacks:
-                # Keep old unsuffixed files as the 100bb fallback.
-                stack_int = int(round(stack_bbs))
-                base = f"preflop_gto_defend_{hero_pos}_vsOpen_{vill_open_pos}"
-                if stack_int == 100:
-                    out_name = f"{base}.json" if range_profile == "standard" else f"{base}_{range_profile}.json"
-                else:
-                    out_name = (
-                        f"{base}_stack{stack_int}bb.json"
-                        if range_profile == "standard"
-                        else f"{base}_stack{stack_int}bb_{range_profile}.json"
-                    )
-                out_path = os.path.join(STORAGE_DIR, out_name)
-                total += 1
+    for open_size in open_sizes:
+        open_suf, _ = open_suffix(open_size)
 
-                if (not args.force) and os.path.exists(out_path):
-                    print(f"[skip] {out_name} already exists")
-                    continue
+        for hero_pos in HERO_POS_LIST:
+            for vill_open_pos in VILL_OPEN_LIST:
+                for stack_bbs in stacks:
+                    stack_int = int(round(stack_bbs))
 
-                missing += 1
+                    prefix = f"preflop_gto_defend_{hero_pos}_vsOpen_{vill_open_pos}"
 
-                use_small = stack_bbs <= float(args.smallStackThreshold)
-                cur_iters = int(args.itersSmall) if use_small else int(args.iters)
-                cur_equityIters = int(args.equityItersSmall) if use_small else int(args.equityIters)
-                cur_comboSamples = int(args.comboSamplesSmall) if use_small else int(args.comboSamples)
+                    if stack_int == 100:
+                        if range_profile == "standard":
+                            out_name = f"{prefix}{open_suf}.json"
+                        else:
+                            out_name = f"{prefix}{open_suf}_{range_profile}.json"
+                    else:
+                        if range_profile == "standard":
+                            out_name = f"{prefix}{open_suf}_stack{stack_int}bb.json"
+                        else:
+                            out_name = f"{prefix}{open_suf}_stack{stack_int}bb_{range_profile}.json"
 
-                cmd = [
-                    args.python,
-                    script,
-                    "--heroPos",
-                    hero_pos,
-                    "--villOpenPos",
-                    vill_open_pos,
-                    "--out",
-                    out_path,
-                    "--iters",
-                    str(cur_iters),
-                    "--equityIters",
-                    str(cur_equityIters),
-                    "--comboSamples",
-                    str(cur_comboSamples),
-                    "--seed",
-                    str(args.seed),
-                    "--evReplicates",
-                    str(args.evReplicates),
-                    "--evSeedStep",
-                    str(args.evSeedStep),
-                    "--rakePct",
-                    str(args.rakePct),
-                    "--rakeCap",
-                    str(args.rakeCap),
-                    "--effectiveStack",
-                    str(stack_bbs),
-                    "--rangeProfile",
-                    range_profile,
-                ]
-                if args.useEquityCache:
-                    cmd.extend(["--useEquityCache", "--equityCacheDir", args.equityCacheDir])
-                run_cmd(cmd, args.dry_run)
+                    out_path = os.path.join(STORAGE_DIR, out_name)
+                    total += 1
+
+                    if (not args.force) and os.path.exists(out_path):
+                        print(f"[skip] {out_name} already exists")
+                        continue
+
+                    missing += 1
+
+                    use_small = stack_bbs <= float(args.smallStackThreshold)
+                    cur_iters = int(args.itersSmall) if use_small else int(args.iters)
+                    cur_equityIters = int(args.equityItersSmall) if use_small else int(args.equityIters)
+                    cur_comboSamples = int(args.comboSamplesSmall) if use_small else int(args.comboSamples)
+
+                    cmd = [
+                        args.python,
+                        script,
+                        "--heroPos",
+                        hero_pos,
+                        "--villOpenPos",
+                        vill_open_pos,
+                        "--out",
+                        out_path,
+                        "--iters",
+                        str(cur_iters),
+                        "--equityIters",
+                        str(cur_equityIters),
+                        "--comboSamples",
+                        str(cur_comboSamples),
+                        "--seed",
+                        str(args.seed),
+                        "--evReplicates",
+                        str(args.evReplicates),
+                        "--evSeedStep",
+                        str(args.evSeedStep),
+                        "--rakePct",
+                        str(args.rakePct),
+                        "--rakeCap",
+                        str(args.rakeCap),
+                        "--effectiveStack",
+                        str(stack_bbs),
+                        "--rangeProfile",
+                        range_profile,
+                        "--openSize",
+                        str(open_size),
+                    ]
+                    if args.useEquityCache:
+                        cmd.extend(["--useEquityCache", "--equityCacheDir", args.equityCacheDir])
+                    run_cmd(cmd, args.dry_run)
 
     print(f"Done. Regenerated {missing}/{total} files (use --force to override skips).")
 

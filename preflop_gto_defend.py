@@ -222,6 +222,7 @@ def solve_for_hero_pos(
     rake_pct: float,
     rake_cap: float,
     effective_stack: float,
+    open_size: float = OPEN_SIZE,
 ) -> Dict:
     """Approximate CFR+ style solving (type-based, dual 3bet sizing, with 4bet branch).
 
@@ -235,22 +236,24 @@ def solve_for_hero_pos(
     """
 
     hero_posted = 1.0 if hero_pos == "BB" else 0.0
-    vill_posted = OPEN_SIZE  # villain already opened
+    vill_posted = float(open_size)  # villain already opened
+
+    pot_pre = 2.0 + float(open_size)
 
     # Dead money sitting in the pot besides the two players' committed chips
     # (SB leftover). For BB-hero this is 1.0 (SB); for CO/BTN-hero this is 2.0
     # (SB+BB) because hero_posted=0.
-    dead_money = max(0.0, POT_PRE - hero_posted - vill_posted)
+    dead_money = max(0.0, pot_pre - hero_posted - vill_posted)
 
     # Hero calls open: remaining chips hero can put in are capped by stack.
-    hero_call_total = cap_total(OPEN_SIZE, effective_stack)
+    hero_call_total = cap_total(float(open_size), effective_stack)
     call_cost = max(0.0, hero_call_total - hero_posted)
-    vill_call_total = cap_total(OPEN_SIZE, effective_stack)
+    vill_call_total = cap_total(float(open_size), effective_stack)
     pot_call = dead_money + hero_call_total + vill_call_total
     pot_call_showdown = apply_rake_to_pot(pot_call, rake_pct, rake_cap)
 
     # EV if villain folds to 3bet: no showdown => no rake.
-    EV_3bet_vill_fold = POT_PRE
+    EV_3bet_vill_fold = float(pot_pre)
 
     # Internal dual 3bet sizing
     threebet_actions = [f"threebet_{i}" for i in range(len(THREEBET_OPTIONS))]
@@ -538,11 +541,11 @@ def solve_for_hero_pos(
     return {
         "hero_pos": hero_pos,
         "params": {
-            "open_size": OPEN_SIZE,
+            "open_size": float(open_size),
             "threebet_options": THREEBET_OPTIONS,
             "threebet_size": THREEBET_SIZE,
             "fourbet_size": FOURBET_SIZE,
-            "pot_pre": POT_PRE,
+            "pot_pre": pot_pre,
             "call_cost": call_cost,
             "pot_call": pot_call,
             "pot_call_showdown": pot_call_showdown,
@@ -574,6 +577,7 @@ def main():
     ap.add_argument("--rakeCap", type=float, default=0.0, help="Rake cap in bb. <=0 disables the cap")
     ap.add_argument("--effectiveStack", type=float, default=100.0, help="Effective stack in bb (scaffolding; default 100 has no effect)")
     ap.add_argument("--rangeProfile", default="standard", choices=["tight", "standard", "loose"], help="Static villain open-range profile")
+    ap.add_argument("--openSize", type=float, default=OPEN_SIZE, help="Open size in bb (default 2.2)")
     ap.add_argument("--useEquityCache", action="store_true", help="Cache equity matrices on disk")
     ap.add_argument("--equityCacheDir", default="", help="Directory for equity cache files")
     args = ap.parse_args()
@@ -594,6 +598,7 @@ def main():
             open_range_base,
             range_profile=range_profile,
             effective_stack=args.effectiveStack,
+            open_size=float(args.openSize),
         )
     vill_classes = sorted(list(open_range.keys()))
 
@@ -648,10 +653,12 @@ def main():
             rake_pct=args.rakePct,
             rake_cap=args.rakeCap,
             effective_stack=args.effectiveStack,
+            open_size=float(args.openSize),
         )
 
         out.setdefault("params", {})
         out["params"]["vill_open_pos"] = args.villOpenPos
+        out["params"]["open_size"] = float(args.openSize)
         out["params"]["ev_replicates"] = ev_reps
         out["params"]["ev_rep_index"] = rep
         out["params"]["rake_pct"] = args.rakePct

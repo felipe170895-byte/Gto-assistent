@@ -215,6 +215,7 @@ def solve_for_rfi_response(
     rake_pct: float,
     rake_cap: float,
     effective_stack: float,
+    open_size: float = OPEN_SIZE,
 ) -> Dict:
     """Approximate CFR-like solving for RFI.
 
@@ -233,9 +234,10 @@ def solve_for_rfi_response(
     hero_posted = 1.0 if hero_pos == "BB" else 0.0
 
     # Hero already opened: remaining chips hero can put in are capped by stack.
-    hero_open_total = cap_total(OPEN_SIZE, effective_stack)
+    hero_open_total = cap_total(float(open_size), effective_stack)
     # If hero is BB, OPEN replaces the 1.0 posted; dead money is the leftover SB.
-    dead_money = max(0.0, POT_PRE - hero_posted - OPEN_SIZE)
+    pot_pre = 2.0 + float(open_size)
+    dead_money = max(0.0, pot_pre - hero_posted - float(open_size))
     pot_open = dead_money + hero_open_total
 
     open_total = hero_open_total
@@ -521,11 +523,11 @@ def solve_for_rfi_response(
         return {
             "hero_pos": hero_pos,
             "params": {
-                "open_size": OPEN_SIZE,
+                "open_size": float(open_size),
                 "threebet_options": THREEBET_OPTIONS,
                 "threebet_size": THREEBET_SIZE,
                 "fourbet_size": FOURBET_SIZE,
-                "pot_pre": POT_PRE,
+                "pot_pre": pot_pre,
             },
             "action_labels": ACTION_HERO_AFTER_THREEBET,
             "hero_strategy": hero_strategy_out,
@@ -587,11 +589,11 @@ def solve_for_rfi_response(
     return {
         "hero_pos": hero_pos,
         "params": {
-            "open_size": OPEN_SIZE,
+            "open_size": float(open_size),
             "threebet_options": THREEBET_OPTIONS,
             "threebet_size": THREEBET_SIZE,
             "fourbet_size": FOURBET_SIZE,
-            "pot_pre": POT_PRE,
+            "pot_pre": pot_pre,
             "pot_open": pot_open,
             "rake_pct": rake_pct,
             "rake_cap": rake_cap,
@@ -628,6 +630,7 @@ def main():
     ap.add_argument("--rakeCap", type=float, default=0.0, help="Rake cap in bb. <=0 disables the cap")
     ap.add_argument("--effectiveStack", type=float, default=100.0, help="Effective stack in bb (scaffolding; default 100 has no effect)")
     ap.add_argument("--rangeProfile", default="standard", choices=["tight", "standard", "loose"], help="Static villain open-range profile")
+    ap.add_argument("--openSize", type=float, default=OPEN_SIZE, help="Open size in bb (default 2.2)")
     ap.add_argument("--useEquityCache", action="store_true", help="Cache equity matrices on disk")
     ap.add_argument("--equityCacheDir", default="", help="Directory for equity cache files")
     args = ap.parse_args()
@@ -699,6 +702,7 @@ def main():
             rake_pct=args.rakePct,
             rake_cap=args.rakeCap,
             effective_stack=args.effectiveStack,
+            open_size=float(args.openSize),
         )
 
         out.setdefault("params", {})
@@ -711,6 +715,7 @@ def main():
         out["params"]["rake_pct"] = args.rakePct
         out["params"]["rake_cap"] = args.rakeCap
         out["params"]["effective_stack"] = args.effectiveStack
+        out["params"]["open_size"] = float(args.openSize)
 
         last_out = out
 

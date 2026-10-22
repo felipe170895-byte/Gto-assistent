@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>GTO NLHE Mode 1 (Pré-flop)</title>
+  <title>GTO NLHE Trainer & Solver — Pré-flop & Pós-flop (Flop, Turn, River)</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <style>
     :root { --felt: #0b1a14; }
@@ -21,34 +21,102 @@
       flex-direction: column;
       justify-content: space-between;
       padding: 0.45rem 0.5rem;
-      box-shadow: 0 10px 25px rgba(0,0,0,.35);
-      border: 1px solid rgba(255,255,255,.08);
+      box-shadow: 0 10px 25px rgba(0,0,0,.45);
+      border: 1px solid rgba(255,255,255,.12);
       user-select: none;
+      transition: all 0.2s ease;
     }
+    .card-face-board {
+      width: 4.5rem;
+      height: 6.2rem;
+    }
+    .card-face-sm {
+      width: 2.5rem;
+      height: 3.5rem;
+      padding: 0.2rem 0.3rem;
+      border-radius: 0.4rem;
+    }
+    .card-face-sm .card-rank { font-size: 0.85rem; }
+    .card-face-sm .card-suit { font-size: 0.85rem; }
     .card-rank { font-size: 1.25rem; font-weight: 800; line-height: 1; }
     .card-suit { font-size: 1.15rem; line-height: 1; text-align: right; }
-    .suit-red { color: #ef4444; }
-    .suit-black { color: #0f172a; }
+
+    /* 4-color deck */
+    .suit-s { color: #0f172a; } /* Spades: Preto */
+    .suit-h { color: #ef4444; } /* Hearts: Vermelho */
+    .suit-d { color: #3b82f6; } /* Diamonds: Azul */
+    .suit-c { color: #10b981; } /* Clubs: Verde */
+
     .card-white { background: #f8fafc; color: #0f172a; }
+    .card-selected { ring: 3px; ring-color: #10b981; transform: translateY(-4px); }
+    .card-dead { opacity: 0.3; pointer-events: none; }
+
     .mix-track { height: 0.55rem; }
-    .action-best { outline: 2px solid rgba(16,185,129,.7); box-shadow: 0 0 0 4px rgba(16,185,129,.15); }
+    .action-best { outline: 2px solid rgba(16,185,129,.8); box-shadow: 0 0 0 4px rgba(16,185,129,.2); }
+
+    /* Matrix Grid */
+    .matrix-grid {
+      display: grid;
+      grid-template-columns: repeat(13, minmax(0, 1fr));
+      gap: 2px;
+    }
+    .matrix-cell {
+      aspect-ratio: 1;
+      font-size: 0.65rem;
+      font-weight: 600;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      border-radius: 2px;
+      cursor: pointer;
+      position: relative;
+      user-select: none;
+    }
+    .matrix-cell:hover {
+      outline: 2px solid #38bdf8;
+      z-index: 10;
+    }
   </style>
 </head>
 <body class="min-h-screen felt text-slate-100">
-  <div class="mx-auto max-w-5xl px-4 py-6">
-    <header class="mb-4">
-      <div class="rounded-xl border border-slate-800 bg-slate-900/40 p-4">
-        <h1 class="text-lg font-semibold">GTO NLHE — Modo 1 (offline) • Pré-flop</h1>
-        <p class="mt-1 text-sm text-slate-300">
-          Treino/estudo offline: este app faz <b>fetch</b> de um solver pré-computado via <code>api/query_preflop_gto.php</code>.
-          <span class="block mt-1">Abra via <b>HTTP</b> (ex.: <code>php -S localhost:8000</code>), não <code>file://</code>.</span>
-        </p>
+  <div class="mx-auto max-w-6xl px-4 py-6">
+    <!-- Header with Mode Selector Tabs -->
+    <header class="mb-5">
+      <div class="rounded-xl border border-slate-800 bg-slate-900/60 p-4 shadow-xl">
+        <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+          <div>
+            <h1 class="text-xl font-bold tracking-tight text-white flex items-center gap-2">
+              <span>♠️ GTO NLHE Poker System</span>
+              <span class="text-xs font-normal px-2.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">CFR+ Solver</span>
+            </h1>
+            <p class="mt-1 text-xs text-slate-300">
+              Treinamento e Análise Teórica GTO para <b>Pré-flop</b> e <b>Pós-flop (Flop, Turn, River)</b>.
+            </p>
+          </div>
+
+          <!-- Mode Tabs -->
+          <div class="flex rounded-lg bg-slate-950 p-1 border border-slate-800">
+            <button id="tab-preflop" class="px-4 py-2 text-sm font-semibold rounded-md transition-all bg-emerald-500 text-slate-950 shadow">
+              🂠 Modo 1: Pré-flop
+            </button>
+            <button id="tab-postflop" class="px-4 py-2 text-sm font-semibold rounded-md transition-all text-slate-400 hover:text-slate-200">
+              🎯 Modo 2: Pós-flop (Flop/Turn/River)
+            </button>
+          </div>
+        </div>
       </div>
     </header>
 
-    <div class="grid grid-cols-1 gap-4 md:grid-cols-3">
+    <!-- ========================================================================= -->
+    <!-- SECTION 1: PRÉ-FLOP VIEW (MODE 1)                                        -->
+    <!-- ========================================================================= -->
+    <div id="view-preflop" class="grid grid-cols-1 gap-4 md:grid-cols-3">
       <section class="md:col-span-1 rounded-xl border border-slate-800 bg-slate-900/30 p-4">
-        <h2 class="text-sm font-semibold text-slate-200">Config do spot</h2>
+        <h2 class="text-sm font-semibold text-slate-200 flex items-center justify-between">
+          <span>Configuração do Spot Pré-flop</span>
+          <span class="text-xs text-emerald-400">Mode 1</span>
+        </h2>
 
         <div class="mt-3">
           <label class="block text-xs text-slate-400">Posição do herói</label>
@@ -81,7 +149,6 @@
             <option value="100" selected>100bb</option>
             <option value="200">200bb</option>
           </select>
-          <div class="mt-1 text-[11px] text-slate-500">JSON por stack. 100bb é o fallback se o arquivo ainda não existir.</div>
         </div>
 
         <div class="mt-4">
@@ -91,12 +158,20 @@
             <option value="tight">Tight</option>
             <option value="loose">Loose</option>
           </select>
-          <div class="mt-1 text-[11px] text-slate-500">Escolhe o range do OPEN do vilão (arquivos com sufixo _tight/_loose).</div>
         </div>
 
         <div class="mt-4">
-          <button id="btn-generate" class="w-full rounded-lg bg-emerald-500 px-4 py-2 text-sm font-semibold text-emerald-950 hover:bg-emerald-400 disabled:opacity-50" type="button">
-            Gerar spot
+          <label class="block text-xs text-slate-400">Tamanho do OPEN (openSize)</label>
+          <select id="filter-open-size" class="mt-1 w-full rounded-lg bg-slate-950 border border-slate-800 p-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-400/60">
+            <option value="2.0">2.0bb</option>
+            <option value="2.2" selected>2.2bb</option>
+            <option value="2.5">2.5bb</option>
+          </select>
+        </div>
+
+        <div class="mt-4">
+          <button id="btn-generate" class="w-full rounded-lg bg-emerald-500 px-4 py-2.5 text-sm font-semibold text-emerald-950 hover:bg-emerald-400 transition-all shadow disabled:opacity-50" type="button">
+            Gerar Próximo Spot
           </button>
         </div>
 
@@ -105,17 +180,13 @@
             <div>
               <div class="text-xs text-slate-400">Status</div>
               <div id="solver-feedback" role="status" aria-live="polite" class="mt-1 text-sm text-slate-200">Pronto.</div>
-            <div class="mt-2 text-[12px] text-slate-400">
-              Arquivos v2: <span id="v2-files-count" class="text-slate-300">—</span>
-            </div>
             </div>
             <div class="text-xs text-slate-500 text-right">
               <div>Modelo: <span id="model-label" class="text-slate-300">Pré-flop</span></div>
-              <div>Open: <span class="text-slate-300">2.2bb</span></div>
+              <div>Open: <span class="text-slate-300" id="open-global-label">2.2bb</span></div>
               <div>3bet: <span id="threebet-global-label" class="text-slate-300">6.5/10.5bb</span></div>
             </div>
           </div>
-
           <div class="mt-3 text-xs text-slate-400">
             Chamadas: <span id="status-calls" class="text-slate-300">0</span>
             • Sucesso: <span id="status-ok" class="text-slate-300">0</span>
@@ -125,1016 +196,1665 @@
       </section>
 
       <section class="md:col-span-2 rounded-xl border border-slate-800 bg-slate-900/30 p-4">
-        <div class="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+        <div class="flex flex-col gap-3">
           <div>
-            <h2 class="text-sm font-semibold text-slate-200">Spot atual</h2>
+            <h2 class="text-sm font-semibold text-slate-200">Spot Pré-flop Atual</h2>
             <div class="mt-2 grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div class="rounded-lg border border-slate-800 bg-slate-950/40 p-3">
                 <div class="text-xs text-slate-400">HERO</div>
-                <div id="matrix-pos-badge" class="mt-1 text-lg font-bold">—</div>
+                <div id="matrix-pos-badge" class="mt-1 text-lg font-bold text-emerald-400">—</div>
               </div>
               <div class="rounded-lg border border-slate-800 bg-slate-950/40 p-3">
                 <div class="text-xs text-slate-400">POT (pré)</div>
-                <div id="pot-display" class="mt-1 text-lg font-bold">—</div>
+                <div id="pot-display" class="mt-1 text-lg font-bold text-amber-300">—</div>
               </div>
             </div>
 
-            <div class="mt-3 rounded-lg border border-slate-800 bg-slate-950/40 p-3">
-              <div class="text-xs text-slate-400">Suas cartas</div>
-              <div id="hero-cards" class="mt-2 flex items-center justify-center gap-3 sm:gap-4" aria-label="Cartas do herói">—</div>
-              <div class="mt-2 text-xs text-slate-500" id="hand-desc">—</div>
+            <div class="mt-3 rounded-lg border border-slate-800 bg-slate-950/40 p-4">
+              <div class="text-xs text-slate-400 text-center mb-2">Suas Cartas</div>
+              <div id="hero-cards" class="flex items-center justify-center gap-3 sm:gap-4" aria-label="Cartas do herói">—</div>
+              <div class="mt-3 text-center text-xs text-slate-400" id="hand-desc">—</div>
 
-              <div class="mt-2 flex flex-wrap gap-2 text-xs">
-                <div class="rounded-full border border-slate-800 bg-slate-950/40 px-2 py-1">
-                  Facing: <span id="facing-pill" class="text-slate-200 font-mono">—</span>
+              <div class="mt-3 flex flex-wrap justify-center gap-2 text-xs">
+                <div class="rounded-full border border-slate-800 bg-slate-950 px-3 py-1">
+                  Facing: <span id="facing-pill" class="text-slate-200 font-mono font-semibold">—</span>
                 </div>
-                <div class="rounded-full border border-slate-800 bg-slate-950/40 px-2 py-1">
-                  3bet: <span id="raise-pill" class="text-slate-200 font-mono">—</span>
+                <div class="rounded-full border border-slate-800 bg-slate-950 px-3 py-1">
+                  3bet: <span id="raise-pill" class="text-slate-200 font-mono font-semibold">—</span>
                 </div>
-              </div>
-
-              <div class="mt-2 text-xs text-slate-500">Bucket: <span id="hero-class-badge" class="text-slate-200 font-mono">—</span></div>
-              <div class="mt-1 text-xs text-slate-500">Stack: <span id="stack-badge" class="text-slate-200 font-mono">—</span></div>
-              <div class="mt-1 text-xs text-slate-500">Vilão (open) assume posição: <span id="vill-open-pos" class="text-slate-200 font-mono">—</span></div>
-              <div class="mt-1 text-[12px] text-slate-500">Range do OPEN do vilão: <span id="vill-open-range-source" class="text-slate-200 font-mono">—</span></div>
-
-              <div class="mt-3 rounded-lg border border-slate-800 bg-slate-950/40 p-3">
-                <div class="text-xs text-slate-400">Linha do spot</div>
-                <div class="mt-1 text-xs text-slate-500">Origem do raise: <span id="open-from" class="text-slate-200 font-mono">—</span></div>
-
-                <div class="mt-2 flex flex-wrap items-center gap-2" id="flow-diagram" aria-label="Sequência da mão (pré-flop)">
-                  <div id="flow-step-open" class="px-2 py-1 rounded-lg border border-slate-800 bg-slate-950/50 text-xs text-slate-200 font-mono">PRÉ-FLOP: OPEN</div>
-                  <div class="text-slate-500">→</div>
-                  <div id="flow-step-hero" class="px-2 py-1 rounded-lg border border-slate-800 bg-slate-950/50 text-xs text-slate-200 font-mono">DEF</div>
-                  <div class="text-slate-500">→</div>
-                  <div id="flow-step-vill" class="px-2 py-1 rounded-lg border border-slate-800 bg-slate-950/50 text-xs text-slate-200 font-mono">(vilão)</div>
-                  <div class="text-slate-500 hidden" id="flow-arrow-vill">→</div>
-                  <div id="flow-step-terminal" class="px-2 py-1 rounded-lg border border-slate-800 bg-slate-950/50 text-xs text-slate-200 font-mono">(terminal)</div>
+                <div class="rounded-full border border-slate-800 bg-slate-950 px-3 py-1">
+                  Classe: <span id="hero-class-badge" class="text-emerald-400 font-mono font-bold">—</span>
                 </div>
-
-                <div class="mt-2 text-sm text-slate-200" id="hand-flow">Clique em FOLD / CALL / 3BET para ver a linha vs o OPEN.</div>
-                <div class="mt-2 text-xs text-slate-500">(Pré-flop: defensor vs open 2.2bb)</div>
+                <div class="rounded-full border border-slate-800 bg-slate-950 px-3 py-1">
+                  Stack: <span id="stack-badge" class="text-slate-200 font-mono">—</span>
+                </div>
               </div>
             </div>
           </div>
 
-          <div class="w-full md:w-80">
-            <div class="text-xs text-slate-400 mb-1">Ações disponíveis</div>
-            <div class="grid grid-cols-1 gap-2">
-              <button id="btn-fold" class="rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-3 text-sm font-semibold disabled:opacity-50 text-left" type="button" disabled>
-                <div class="flex items-center justify-between">
-                  <span class="font-mono" id="lbl-fold">FOLD</span>
-                  <span class="text-[11px] text-rose-200/80" id="mix-fold-btn">—</span>
-                </div>
-              </button>
-              <button id="btn-call" class="rounded-lg border border-sky-500/30 bg-sky-500/10 px-3 py-3 text-sm font-semibold disabled:opacity-50 text-left" type="button" disabled>
-                <div class="flex items-center justify-between">
-                  <span class="font-mono" id="lbl-call">CALL</span>
-                  <span class="text-[11px] text-sky-200/80" id="mix-call-btn">—</span>
-                </div>
-              </button>
-              <button id="btn-raise" class="rounded-lg border border-amber-400/40 bg-amber-400/10 px-3 py-3 text-sm font-semibold disabled:opacity-50 text-left" type="button" disabled>
-                <div class="flex items-center justify-between">
-                  <span class="font-mono" id="lbl-raise">3BET</span>
-                  <span class="text-[11px] text-amber-200/80" id="mix-three-btn">—</span>
-                </div>
-              </button>
+          <div class="rounded-lg border border-slate-800 bg-slate-950/40 p-4">
+            <div class="text-sm font-semibold text-slate-200 flex items-center justify-between">
+              <span>Decisão & Recomendação GTO</span>
+              <span class="text-xs text-slate-400" id="open-used-pill">Open: 2.2bb</span>
             </div>
 
-            <div class="mt-3 rounded-lg border border-slate-800 bg-slate-950/40 p-3">
-              <div class="text-xs text-slate-400">Recomendação</div>
-              <div class="mt-2 text-sm" id="recommendation">—</div>
-              <div class="mt-2 text-[12px] text-slate-400">EV-gap: <span id="ev-gap" class="font-mono">—</span></div>
-              <div class="mt-2 text-[12px] text-amber-200/90 hidden" id="uncertainty-warning">⚠️ Baixa confiança (std alto e/ou EV-gap baixo).</div>
+            <div class="mt-3 text-slate-200" id="recommendation">—</div>
+
+            <div class="mt-4 flex flex-col sm:flex-row gap-2">
+              <button id="btn-fold" class="flex-1 rounded-lg border border-rose-500/60 bg-rose-500/10 px-4 py-3 text-sm font-bold text-rose-200 hover:bg-rose-500/25 transition-all disabled:opacity-50" type="button">FOLD</button>
+              <button id="btn-call" class="flex-1 rounded-lg border border-amber-500/60 bg-amber-500/10 px-4 py-3 text-sm font-bold text-amber-100 hover:bg-amber-500/25 transition-all disabled:opacity-50" type="button">CALL</button>
+              <button id="btn-raise" class="flex-1 rounded-lg border border-emerald-500/60 bg-emerald-500/10 px-4 py-3 text-sm font-bold text-emerald-200 hover:bg-emerald-500/25 transition-all disabled:opacity-50" type="button">3BET</button>
+            </div>
+
+            <div class="mt-4 grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <div class="rounded-lg border border-rose-500/30 bg-rose-500/10 p-3">
+                <div class="flex items-center justify-between">
+                  <div class="text-xs font-bold text-rose-300">FOLD</div>
+                  <div class="text-xs text-slate-300 font-mono">EV: <span id="ev-fold">—</span></div>
+                </div>
+                <div class="mt-2 mix-track w-full rounded bg-slate-950 overflow-hidden">
+                  <div id="bar-fold" class="h-full w-0 bg-rose-400 transition-all duration-300"></div>
+                </div>
+                <div class="mt-2 text-xs text-slate-400 flex justify-between">
+                  <span>Freq GTO:</span>
+                  <span id="mix-fold" class="font-bold text-slate-200">—</span>
+                </div>
+              </div>
+
+              <div class="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3">
+                <div class="flex items-center justify-between">
+                  <div class="text-xs font-bold text-amber-300">CALL</div>
+                  <div class="text-xs text-slate-300 font-mono">EV: <span id="ev-call">—</span></div>
+                </div>
+                <div class="mt-2 mix-track w-full rounded bg-slate-950 overflow-hidden">
+                  <div id="bar-call" class="h-full w-0 bg-amber-400 transition-all duration-300"></div>
+                </div>
+                <div class="mt-2 text-xs text-slate-400 flex justify-between">
+                  <span>Freq GTO:</span>
+                  <span id="mix-call" class="font-bold text-slate-200">—</span>
+                </div>
+              </div>
+
+              <div class="rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-3">
+                <div class="flex items-center justify-between">
+                  <div class="text-xs font-bold text-emerald-300" id="ev-three-title">3BET</div>
+                  <div class="text-xs text-slate-300 font-mono">EV: <span id="ev-three">—</span></div>
+                </div>
+                <div class="mt-2 mix-track w-full rounded bg-slate-950 overflow-hidden">
+                  <div id="bar-three" class="h-full w-0 bg-emerald-400 transition-all duration-300"></div>
+                </div>
+                <div class="mt-2 text-xs text-slate-400 flex justify-between">
+                  <span>Freq GTO:</span>
+                  <span id="mix-three" class="font-bold text-slate-200">—</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="mt-3 hidden" id="uncertainty-warning">
+              <div class="text-amber-200 text-xs bg-amber-500/10 border border-amber-500/30 rounded p-2">
+                ⚠️ Baixa confiança estatística / Gap pequeno de EV. <span id="uncertainty-metrics"></span>
+              </div>
             </div>
           </div>
-        </div>
-
-        <div id="solver-bars-box" class="mt-5">
-          <h2 class="text-sm font-semibold text-slate-200">EV & mistura de estratégia</h2>
-          <div class="mt-3 space-y-3">
-            <div class="rounded-lg border border-slate-800 bg-slate-950/40 p-3">
-              <div class="flex items-center justify-between">
-                <div class="text-sm font-semibold">FOLD</div>
-                <div class="text-xs text-slate-400">
-                  <span id="ev-fold">—</span>
-                  <span class="text-[11px] text-slate-500">(<span id="ev-fold-std">—</span>)</span>
-                </div>
-              </div>
-              <div class="mt-2 mix-track w-full rounded bg-slate-900 overflow-hidden">
-                <div id="bar-fold" class="h-full w-0 bg-rose-500/80"></div>
-              </div>
-              <div class="mt-2 text-xs text-slate-500">Mix: <span id="mix-fold">—</span></div>
-            </div>
-
-            <div class="rounded-lg border border-slate-800 bg-slate-950/40 p-3">
-              <div class="flex items-center justify-between">
-                <div class="text-sm font-semibold">CALL</div>
-                <div class="text-xs text-slate-400">
-                  <span id="ev-call">—</span>
-                  <span class="text-[11px] text-slate-500">(<span id="ev-call-std">—</span>)</span>
-                </div>
-              </div>
-              <div class="mt-2 mix-track w-full rounded bg-slate-900 overflow-hidden">
-                <div id="bar-call" class="h-full w-0 bg-sky-400/80"></div>
-              </div>
-              <div class="mt-2 text-xs text-slate-500">Mix: <span id="mix-call">—</span></div>
-            </div>
-
-            <div class="rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-3">
-              <div class="flex items-center justify-between">
-                <div class="text-sm font-semibold" id="ev-three-title">3BET</div>
-                <div class="text-xs text-slate-400">
-                  <span id="ev-three">—</span>
-                  <span class="text-[11px] text-slate-500">(<span id="ev-three-std">—</span>)</span>
-                </div>
-              </div>
-              <div class="mt-2 mix-track w-full rounded bg-slate-900 overflow-hidden">
-                <div id="bar-three" class="h-full w-0 bg-amber-400/80"></div>
-              </div>
-              <div class="mt-2 text-xs text-slate-500">Mix: <span id="mix-three">—</span></div>
-            </div>
-          </div>
-        </div>
-
-        <div class="mt-4 text-xs text-slate-500">
-          Observação: este modelo é apenas <b>pré-flop</b> (offline) e usa <b>cards</b> + <b>posição</b>.
-          No modo <b>DEFEND</b> você responde ao OPEN do vilão; no modo <b>RFI</b> você abre primeiro.
-          Para flop/turn/river ainda não está no Mode 1.
         </div>
       </section>
     </div>
+
+    <!-- ========================================================================= -->
+    <!-- SECTION 2: PÓS-FLOP SOLVER & TRAINER VIEW (FLOP, TURN, RIVER)             -->
+    <!-- ========================================================================= -->
+    <div id="view-postflop" class="hidden flex flex-col gap-5">
+
+      <div id="hand-continue-banner" class="hidden rounded-xl border border-emerald-500/40 bg-emerald-500/10 px-4 py-3">
+        <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+          <div>
+            <div class="text-[11px] uppercase tracking-wide text-emerald-400 font-semibold">Mão contínua</div>
+            <div id="hand-continue-text" class="text-sm text-emerald-100 mt-0.5">—</div>
+          </div>
+          <button id="btn-back-preflop" type="button" class="px-3 py-1.5 text-xs font-semibold rounded-lg border border-emerald-500/40 text-emerald-200 hover:bg-emerald-500/20">
+            Voltar ao pré-flop
+          </button>
+        </div>
+      </div>
+
+      <!-- Top Control Bar: Board Setup & Presets -->
+      <div class="rounded-xl border border-slate-800 bg-slate-900/40 p-4 shadow-lg">
+        <div class="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
+
+          <!-- Board Cards Visualizer -->
+          <div>
+            <div class="text-xs text-slate-400 font-semibold mb-2 flex items-center gap-2">
+              <span>MESA / BOARD (<span id="postflop-street-label" class="text-emerald-400 font-bold">FLOP</span>)</span>
+              <span id="board-texture-badge" class="text-[11px] px-2 py-0.5 rounded bg-slate-800 text-slate-300">Ace-High Dry</span>
+            </div>
+            <div id="board-cards-container" class="flex items-center gap-2 sm:gap-3">
+              <!-- Rendered dynamically -->
+            </div>
+          </div>
+
+          <!-- Board Actions & Presets -->
+          <div class="flex flex-wrap items-center gap-2">
+            <button id="btn-random-flop" class="px-3 py-2 text-xs font-semibold rounded-lg bg-emerald-500 text-slate-950 hover:bg-emerald-400 transition-all shadow">
+              🎲 Random Flop
+            </button>
+            <button id="btn-add-turn" class="px-3 py-2 text-xs font-semibold rounded-lg bg-blue-600 text-white hover:bg-blue-500 transition-all shadow disabled:opacity-40">
+              + Turn
+            </button>
+            <button id="btn-add-river" class="px-3 py-2 text-xs font-semibold rounded-lg bg-indigo-600 text-white hover:bg-indigo-500 transition-all shadow disabled:opacity-40">
+              + River
+            </button>
+            <button id="btn-open-card-picker" class="px-3 py-2 text-xs font-semibold rounded-lg bg-slate-800 text-slate-200 hover:bg-slate-700 transition-all border border-slate-700">
+              🃏 Escolher Cartas
+            </button>
+
+            <!-- Texture Presets Dropdown -->
+            <select id="preset-board-select" class="rounded-lg bg-slate-950 border border-slate-800 p-2 text-xs text-slate-300 focus:outline-none focus:ring-2 focus:ring-emerald-400">
+              <option value="">Presets de Textura...</option>
+              <option value="As,7d,2c">Dry A-high (A♠ 7♦ 2♣)</option>
+              <option value="Kh,Jc,9h">Dynamic Wet (K♥ J♣ 9♥)</option>
+              <option value="Qd,8d,3d">Monotone (Q♦ 8♦ 3♦)</option>
+              <option value="8s,8h,3c">Paired (8♠ 8♥ 3♣)</option>
+              <option value="Ts,9c,8h">Connected Straight (T♠ 9♣ 8♥)</option>
+              <option value="Ah,Kh,Qh">Broadway Monotone (A♥ K♥ Q♥)</option>
+            </select>
+          </div>
+        </div>
+      </div>
+
+      <!-- Main Postflop Grid: Spot Config & Solver Results -->
+      <div class="grid grid-cols-1 gap-4 lg:grid-cols-3">
+
+        <!-- Left Column: Spot Parameters & Range Settings -->
+        <div class="lg:col-span-1 rounded-xl border border-slate-800 bg-slate-900/30 p-4 flex flex-col gap-4">
+          <h2 class="text-sm font-semibold text-slate-200 flex items-center justify-between">
+            <span>Parâmetros do Pós-flop</span>
+            <span class="text-xs text-emerald-400">CFR+ Subgame</span>
+          </h2>
+
+          <div>
+            <label class="block text-xs text-slate-400">Spot Pré-flop (Ranges Iniciais)</label>
+            <select id="postflop-spot-select" class="mt-1 w-full rounded-lg bg-slate-950 border border-slate-800 p-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-400">
+              <option value="BB_vs_BTN" selected>BB (OOP Defensor) vs BTN (IP Opener)</option>
+              <option value="BTN_vs_CO">BTN (IP Caller) vs CO (OOP Opener)</option>
+              <option value="CO_vs_UTG">CO (IP Caller) vs UTG (OOP Opener)</option>
+            </select>
+          </div>
+
+          <div class="grid grid-cols-2 gap-2">
+            <div>
+              <label class="block text-xs text-slate-400">Stack Efetivo</label>
+              <select id="postflop-stack-select" class="mt-1 w-full rounded-lg bg-slate-950 border border-slate-800 p-2 text-xs focus:outline-none focus:ring-2 focus:ring-emerald-400">
+                <option value="20">20bb</option>
+                <option value="40">40bb</option>
+                <option value="100" selected>100bb</option>
+                <option value="200">200bb</option>
+              </select>
+            </div>
+            <div>
+              <label class="block text-xs text-slate-400">Precisão CFR+</label>
+              <select id="postflop-iters-select" class="mt-1 w-full rounded-lg bg-slate-950 border border-slate-800 p-2 text-xs focus:outline-none focus:ring-2 focus:ring-emerald-400">
+                <option value="80">Rápido (80 iters)</option>
+                <option value="150" selected>Padrão (150 iters)</option>
+                <option value="300">Profundo (300 iters)</option>
+              </select>
+            </div>
+          </div>
+
+          <!-- Hero Hand Info Box -->
+          <div class="rounded-lg border border-slate-800 bg-slate-950/50 p-3">
+            <div class="flex items-center justify-between text-xs text-slate-400 mb-2">
+              <span>Sua Mão (Hero)</span>
+              <button id="btn-random-hero-cards" class="text-emerald-400 hover:underline">🎲 Nova Mão</button>
+            </div>
+            <div id="postflop-hero-cards" class="flex items-center justify-center gap-3 my-2">
+              <!-- Rendered Hero Cards -->
+            </div>
+            <div class="mt-2 text-center text-xs">
+              <span id="postflop-hero-cat-badge" class="px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 font-semibold border border-emerald-500/30">Top Pair</span>
+              <span id="postflop-hero-draw-badge" class="ml-1 px-2 py-0.5 rounded-full bg-blue-500/20 text-blue-300 font-semibold border border-blue-500/30 hidden">Nut Flush Draw</span>
+            </div>
+          </div>
+
+          <!-- Tree Sizings Config Accordion -->
+          <div class="rounded-lg border border-slate-800 bg-slate-950/40 p-3">
+            <div class="text-xs font-semibold text-slate-300 mb-2">Bet Sizings da Árvore</div>
+            <div class="grid grid-cols-2 gap-2 text-xs">
+              <div>
+                <span class="text-slate-400">IP C-bet:</span>
+                <span class="text-slate-200 font-mono ml-1">33%, 75%</span>
+              </div>
+              <div>
+                <span class="text-slate-400">Check-Raise:</span>
+                <span class="text-slate-200 font-mono ml-1">3.0x</span>
+              </div>
+              <div class="col-span-2 flex items-center gap-2 mt-1">
+                <input type="checkbox" id="allow-donk-check" class="rounded bg-slate-900 border-slate-700 text-emerald-500 focus:ring-0">
+                <label for="allow-donk-check" class="text-slate-400 text-xs cursor-pointer">Permitir OOP Donk Lead</label>
+              </div>
+            </div>
+          </div>
+
+          <!-- Solve Button -->
+          <button id="btn-solve-postflop" class="w-full rounded-lg bg-emerald-500 px-4 py-3 text-sm font-bold text-slate-950 hover:bg-emerald-400 transition-all shadow-lg flex items-center justify-center gap-2">
+            <span id="postflop-btn-spinner" class="hidden animate-spin">🔄</span>
+            <span>⚡ Resolver Árvore GTO</span>
+          </button>
+        </div>
+
+        <!-- Right 2 Columns: Interactive Postflop Decision & Range Breakdown -->
+        <div class="lg:col-span-2 flex flex-col gap-4">
+
+          <!-- Node Selector Tabs: Step through the hand -->
+          <div class="rounded-xl border border-slate-800 bg-slate-900/40 p-4 shadow-lg">
+            <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 mb-3">
+              <div class="text-sm font-semibold text-slate-200 flex items-center gap-2">
+                <span>Decisão no Ponto da Árvore</span>
+                <span id="active-node-badge" class="px-2 py-0.5 rounded text-xs bg-slate-800 text-emerald-400 font-mono font-bold">Node: x (IP vs Check)</span>
+              </div>
+              <div class="text-xs text-slate-400">
+                Pote: <span id="postflop-node-pot" class="text-amber-300 font-bold">5.4 BB</span>
+              </div>
+            </div>
+
+            <!-- Decision Points Selector Bar -->
+            <div class="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-4">
+              <button data-node="root" class="node-tab px-2 py-2 text-xs font-semibold rounded-lg border border-slate-800 bg-slate-950 text-slate-400 hover:text-white transition-all text-center">
+                1. OOP Lead / Check
+              </button>
+              <button data-node="x" class="node-tab active px-2 py-2 text-xs font-semibold rounded-lg border border-emerald-500 bg-emerald-500/20 text-emerald-300 transition-all text-center">
+                2. IP C-bet vs Check
+              </button>
+              <button data-node="x_bet_33" class="node-tab px-2 py-2 text-xs font-semibold rounded-lg border border-slate-800 bg-slate-950 text-slate-400 hover:text-white transition-all text-center">
+                3. OOP vs Bet 33%
+              </button>
+              <button data-node="x_bet_33_raise_30x" class="node-tab px-2 py-2 text-xs font-semibold rounded-lg border border-slate-800 bg-slate-950 text-slate-400 hover:text-white transition-all text-center">
+                4. IP vs Check-Raise
+              </button>
+            </div>
+
+            <!-- Hero Interactive Trainer Box -->
+            <div class="rounded-lg border border-slate-800 bg-slate-950/60 p-4">
+              <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                <div>
+                  <div class="text-xs text-slate-400">Sua Mão no Node Atual:</div>
+                  <div id="hero-node-recommendation" class="text-sm font-bold text-white mt-1">
+                    GTO Recomenda: <span class="text-emerald-400">CHECK (100.0%)</span>
+                  </div>
+                </div>
+                <div class="text-right">
+                  <div class="text-xs text-slate-400">Jogador a agir:</div>
+                  <div id="node-player-badge" class="text-xs font-bold text-amber-300 mt-0.5">IP (BTN)</div>
+                </div>
+              </div>
+
+              <!-- Action Strategy Bars for Node -->
+              <div id="node-action-bars" class="mt-4 flex flex-col gap-3">
+                <!-- Dynamically generated action bars -->
+              </div>
+            </div>
+          </div>
+
+          <!-- Range Categories & Texture Distribution -->
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+
+            <!-- OOP Category Breakdown -->
+            <div class="rounded-xl border border-slate-800 bg-slate-900/30 p-4">
+              <div class="text-xs font-bold text-slate-300 mb-3 flex items-center justify-between">
+                <span>OOP (<span id="oop-cat-pos">BB</span>) — Distribuição de Mãos</span>
+                <span class="text-[11px] text-slate-400" id="oop-combos-count">480 combos</span>
+              </div>
+              <div id="oop-category-list" class="flex flex-col gap-2">
+                <!-- OOP categories -->
+              </div>
+            </div>
+
+            <!-- IP Category Breakdown -->
+            <div class="rounded-xl border border-slate-800 bg-slate-900/30 p-4">
+              <div class="text-xs font-bold text-slate-300 mb-3 flex items-center justify-between">
+                <span>IP (<span id="ip-cat-pos">BTN</span>) — Distribuição de Mãos</span>
+                <span class="text-[11px] text-slate-400" id="ip-combos-count">560 combos</span>
+              </div>
+              <div id="ip-category-list" class="flex flex-col gap-2">
+                <!-- IP categories -->
+              </div>
+            </div>
+
+          </div>
+
+          <!-- Strategy Matrix (169 Classes Heatmap for Active Node) -->
+          <div class="rounded-xl border border-slate-800 bg-slate-900/40 p-4 shadow-lg">
+            <div class="flex items-center justify-between mb-3">
+              <div class="text-sm font-semibold text-slate-200">
+                Matriz de Estratégia GTO (169 Classes no Node)
+              </div>
+              <div class="flex items-center gap-3 text-xs text-slate-400">
+                <span class="flex items-center gap-1"><span class="w-2.5 h-2.5 rounded-full bg-blue-500"></span> Check/Fold</span>
+                <span class="flex items-center gap-1"><span class="w-2.5 h-2.5 rounded-full bg-amber-500"></span> Call</span>
+                <span class="flex items-center gap-1"><span class="w-2.5 h-2.5 rounded-full bg-emerald-500"></span> Bet/Raise</span>
+              </div>
+            </div>
+            <div id="postflop-matrix-container" class="matrix-grid bg-slate-950 p-2 rounded-lg border border-slate-800">
+              <!-- Rendered 13x13 Grid -->
+            </div>
+          </div>
+
+        </div>
+
+      </div>
+
+    </div>
+
   </div>
 
-<script>
-  // ===== Constantes (pré-flop modelado) =====
-  const RANKS = "AKQJT98765432";
-  const SUITS = "shdc";
-  // Mode 1: herói só defende vs OPEN. UTG/SB não são spots deste modo.
-  const defenderPositions = ["CO", "BTN", "BB"];
-  const positionsList = defenderPositions;
+  <!-- Card Picker Modal -->
+  <div id="card-picker-modal" class="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 hidden flex items-center justify-center p-4">
+    <div class="bg-slate-900 border border-slate-800 rounded-2xl max-w-lg w-full p-5 shadow-2xl">
+      <div class="flex items-center justify-between mb-4">
+        <h3 class="text-sm font-bold text-white">Selecionador de Cartas (52 cartas)</h3>
+        <button id="btn-close-card-picker" class="text-slate-400 hover:text-white text-lg">✕</button>
+      </div>
 
-  const openSize = 2.2;
-  const THREEBET_OPTIONS = [6.5, 7.5, 9.0, 10.5];
-  let threeBetLabel = `(${THREEBET_OPTIONS[0].toFixed(1)}/${THREEBET_OPTIONS[THREEBET_OPTIONS.length - 1].toFixed(1)}bb)`;
+      <div class="mb-3 text-xs text-slate-400">
+        Selecione o destino da carta:
+        <div class="flex gap-2 mt-1">
+          <button id="pick-target-board" class="px-3 py-1 text-xs rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 font-semibold">Board</button>
+          <button id="pick-target-hero" class="px-3 py-1 text-xs rounded bg-slate-800 text-slate-300 font-semibold">Hero (2 cartas)</button>
+        </div>
+      </div>
 
-  function computeThreeBetLabel(opts) {
-    const arr = Array.isArray(opts) ? opts : [];
-    if (!arr.length) return threeBetLabel;
-    const nums = arr.map(x => Number(x)).filter(x => Number.isFinite(x));
-    if (!nums.length) return threeBetLabel;
-    // label: (min/max)bb
-    const a = Math.min(...nums);
-    const b = Math.max(...nums);
-    return `(${a.toFixed(1)}/${b.toFixed(1)}bb)`;
-  }
-  const fourbetSize = 21.0;
-  const potPre = 4.2; // SB+BB+Open
+      <!-- 52 Card Grid -->
+      <div id="card-picker-grid" class="grid grid-cols-13 gap-1 my-3">
+        <!-- 4 ranks x 13 cards -->
+      </div>
 
-  // ===== Estado =====
-  let isLocked = false;
-  let activeSpot = null;
-  let activeStage = 'defend'; // defend | rfi_open
+      <div class="mt-4 flex justify-end gap-2">
+        <button id="btn-clear-board" class="px-3 py-1.5 text-xs rounded bg-rose-500/20 text-rose-300 hover:bg-rose-500/30">Limpar Board</button>
+        <button id="btn-confirm-picker" class="px-4 py-1.5 text-xs font-semibold rounded bg-emerald-500 text-slate-950 hover:bg-emerald-400">Concluir</button>
+      </div>
+    </div>
+  </div>
 
-  const UI = {
-    generate: document.getElementById('btn-generate'),
-    feedback: document.getElementById('solver-feedback'),
-    statusCalls: document.getElementById('status-calls'),
-    statusOk: document.getElementById('status-ok'),
-    statusErr: document.getElementById('status-err'),
+  <!-- ========================================================================= -->
+  <!-- JAVASCRIPT LOGIC                                                          -->
+  <!-- ========================================================================= -->
+  <script>
+    const RANKS = "AKQJT98765432";
+    const SUITS = ["s", "h", "d", "c"];
+    const SUIT_GLYPHS = { s: '♠', h: '♥', d: '♦', c: '♣' };
+    const SUIT_COLORS = { s: 'suit-s', h: 'suit-h', d: 'suit-d', c: 'suit-c' };
 
-    posBadge: document.getElementById('matrix-pos-badge'),
-    potDisplay: document.getElementById('pot-display'),
-    heroCards: document.getElementById('hero-cards'),
-    handDesc: document.getElementById('hand-desc'),
+    // =========================================================================
+    // STATE
+    // =========================================================================
+    let currentMode = 'preflop'; // 'preflop' | 'postflop'
 
-    foldBtn: document.getElementById('btn-fold'),
-    callBtn: document.getElementById('btn-call'),
-    threeBtn: document.getElementById('btn-raise'),
+    // Preflop State
+    const defenderPositions = ["CO", "BTN", "BB"];
+    let openSize = 2.2;
+    let threeBetLabel = '(6.5/10.5bb)';
+    let activeSpot = null;
+    let activeStage = 'defend';
+    let isPreflopLocked = false;
+    let lastPreflopSpot = null;
 
-    lblFold: document.getElementById('lbl-fold'),
-    lblCall: document.getElementById('lbl-call'),
-    lblRaise: document.getElementById('lbl-raise'),
+    // Postflop State
+    let currentBoard = ["As", "7h", "2c"];
+    let currentHeroCards = ["Ac", "5c"];
+    let postflopResults = null;
+    let activeNodeId = "x";
+    let isSolvingPostflop = false;
+    let pickerTarget = "board"; // 'board' | 'hero'
+    let continuedFromPreflop = false;
 
-    recommendation: document.getElementById('recommendation'),
+    // Which preflop action we are continuing from (drives banner + overrides)
+    let continuedFromPreflopAction = null; // 'CALL' | '3BET' | null
 
-    barsBox: document.getElementById('solver-bars-box'),
+    // Hand lifecycle / continuous-streets state
+    let handEnded = false;
+    let streetCanAdvance = false; // set to true after user resolves current FLOP/TURN via node actions
+    let currentEffectiveStackUsed = null; // snapshot of effective stack used for current street solve
 
-    evFold: document.getElementById('ev-fold'),
-    evCall: document.getElementById('ev-call'),
-    evThree: document.getElementById('ev-three'),
+    // Per-player stack tracking across hand-continuous streets (approximate via pot deltas)
+    let currentOopStackRemaining = null; // number | null
+    let currentIpStackRemaining = null;  // number | null
 
-    mixFold: document.getElementById('mix-fold'),
-    mixCall: document.getElementById('mix-call'),
-    mixThree: document.getElementById('mix-three'),
+    // Overrides for hand-continuous flows (flop -> turn -> river)
+    let effectiveStackOverride = null;   // number | null
+    let potPreOverride = null;            // number | null
+    let openSizeUsedOverride = null;     // number | null
 
-    barFold: document.getElementById('bar-fold'),
-    barCall: document.getElementById('bar-call'),
-    barThree: document.getElementById('bar-three'),
-  };
+    // Real investments from preflop (used for hand-continuous)
+    let oopInvestedPre = null;   // number | null
+    let ipInvestedPre = null;    // number | null
 
-  function setFeedback(html, kind) {
-    UI.feedback.innerHTML = html;
-    if (kind === 'err') {
-      UI.feedback.className = 'mt-1 text-sm text-rose-300';
-    } else if (kind === 'ok') {
-      UI.feedback.className = 'mt-1 text-sm text-emerald-200';
-    } else {
-      UI.feedback.className = 'mt-1 text-sm text-slate-200';
-    }
-  }
-
-  function cardToText(card) {
-    return `${card.r}${card.s}`;
-  }
-
-  function pickRandomHand() {
-    // retorna duas cartas sem duplicar
-    let r1 = RANKS[Math.floor(Math.random()*RANKS.length)];
-    let s1 = SUITS[Math.floor(Math.random()*SUITS.length)];
-
-    let r2 = RANKS[Math.floor(Math.random()*RANKS.length)];
-    let s2 = SUITS[Math.floor(Math.random()*SUITS.length)];
-
-    // evitar carta idêntica
-    if (r1 === r2 && s1 === s2) {
-      s2 = SUITS.split('').reverse().find(x => x !== s1);
-      if (!s2) s2 = 'h';
+    function fullDeck() {
+      const deck = [];
+      for (const r of RANKS) {
+        for (const s of SUITS) deck.push(`${r}${s}`);
+      }
+      return deck;
     }
 
-    // normalização simples do par: permite pares (r1==r2) com suits diferentes.
-    return [{r: r1, s: s1}, {r: r2, s: s2}];
-  }
+    function shuffleInPlace(arr) {
+      for (let i = arr.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [arr[i], arr[j]] = [arr[j], arr[i]];
+      }
+      return arr;
+    }
 
-  function suitGlyph(s) {
-    return { s: '♠', h: '♥', d: '♦', c: '♣' }[s] || s;
-  }
+    function dealCards(n, dead) {
+      const deadSet = new Set(dead || []);
+      const available = fullDeck().filter((c) => !deadSet.has(c));
+      shuffleInPlace(available);
+      return available.slice(0, n);
+    }
 
-  function renderHeroCards(cards) {
-    UI.heroCards.innerHTML = '';
-    cards.forEach(c => {
-      const red = (c.s === 'h' || c.s === 'd');
+    // =========================================================================
+    // TAB SWITCHING
+    // =========================================================================
+    const tabPreflop = document.getElementById('tab-preflop');
+    const tabPostflop = document.getElementById('tab-postflop');
+    const viewPreflop = document.getElementById('view-preflop');
+    const viewPostflop = document.getElementById('view-postflop');
+
+    function switchTab(mode, opts) {
+      const autoSolve = !opts || opts.autoSolve !== false;
+      currentMode = mode;
+      if (mode === 'preflop') {
+        tabPreflop.className = 'px-4 py-2 text-sm font-semibold rounded-md transition-all bg-emerald-500 text-slate-950 shadow';
+        tabPostflop.className = 'px-4 py-2 text-sm font-semibold rounded-md transition-all text-slate-400 hover:text-slate-200';
+        viewPreflop.classList.remove('hidden');
+        viewPostflop.classList.add('hidden');
+      } else {
+        tabPostflop.className = 'px-4 py-2 text-sm font-semibold rounded-md transition-all bg-emerald-500 text-slate-950 shadow';
+        tabPreflop.className = 'px-4 py-2 text-sm font-semibold rounded-md transition-all text-slate-400 hover:text-slate-200';
+        viewPostflop.classList.remove('hidden');
+        viewPreflop.classList.add('hidden');
+
+        if (autoSolve && !postflopResults && !isSolvingPostflop) {
+          solvePostflopCurrentSpot();
+        }
+      }
+    }
+
+    tabPreflop.addEventListener('click', () => switchTab('preflop'));
+    tabPostflop.addEventListener('click', () => switchTab('postflop'));
+
+    // =========================================================================
+    // CARD RENDERING HELPERS
+    // =========================================================================
+    function createCardElement(cardStr, isBoard = false, isSmall = false) {
+      if (!cardStr || cardStr.length < 2) return null;
+      const rank = cardStr[0].toUpperCase();
+      const suit = cardStr[1].toLowerCase();
       const el = document.createElement('div');
-      el.className = 'card-face card-white';
+
+      let classes = `card-face card-white ${isBoard ? 'card-face-board' : ''} ${isSmall ? 'card-face-sm' : ''}`;
+      el.className = classes;
       el.innerHTML = `
-        <div class="card-rank ${red ? 'suit-red' : 'suit-black'}">${c.r}</div>
-        <div class="card-suit ${red ? 'suit-red' : 'suit-black'}">${suitGlyph(c.s)}</div>
+        <div class="card-rank ${SUIT_COLORS[suit] || 'suit-s'}">${rank}</div>
+        <div class="card-suit ${SUIT_COLORS[suit] || 'suit-s'}">${SUIT_GLYPHS[suit] || suit}</div>
       `;
-      UI.heroCards.appendChild(el);
-    });
-  }
-
-  function comboLabel(cards) {
-    const rIdx1 = RANKS.indexOf(cards[0].r);
-    const rIdx2 = RANKS.indexOf(cards[1].r);
-    const high = Math.min(rIdx1, rIdx2);
-    const low = Math.max(rIdx1, rIdx2);
-
-    if (cards[0].r === cards[1].r) {
-      return `${cards[0].r}${cards[1].s}`; // fallback
+      return el;
     }
 
-    const suited = cards[0].s === cards[1].s;
-    return (high === low)
-      ? (RANKS[high] + RANKS[low])
-      : (RANKS[high] + RANKS[low] + (suited ? 's' : 'o'));
-  }
-
-  function updateButtonsEnabled(enabled) {
-    [UI.foldBtn, UI.callBtn, UI.threeBtn].forEach(b => {
-      b.disabled = !enabled;
-      b.style.opacity = enabled ? '1' : '0.5';
-    });
-  }
-
-  function setButtonsForStage() {
-    if (!activeSpot) return;
-
-    // evita “sticky state” da tela anterior (ex.: ação best ficar como CALL)
-    [UI.foldBtn, UI.callBtn, UI.threeBtn].forEach(b => b.classList.remove('action-best'));
-
-    const isRfi = activeSpot.chosenSpotType === 'rfi';
-    if (!isRfi) {
-      // defender stage (sempre todos 3)
-      UI.lblFold.textContent = 'FOLD';
-      UI.lblCall.textContent = `CALL ${activeSpot.facingBet.toFixed(1)} BB`;
-      UI.lblRaise.textContent = `3BET ${threeBetLabel}`;
-
-      updateButtonsEnabled(true);
-      // renderSolverBars (no DEFEND) é quem destaca a melhor ação.
-      return;
-    }
-
-    if (activeStage === 'rfi_open_wait') {
-      // RFI etapa 1: só existe decisão de RAISE (OPEN). Sem mix/EV ainda.
-      UI.lblFold.textContent = 'FOLD';
-      UI.lblCall.textContent = 'CALL';
-      UI.lblRaise.textContent = `RAISE OPEN ${openSize.toFixed(1)}bb`;
-
-      // limpa qualquer “destaque”/mistura que possa sobrar da rodada anterior.
-      if (UI.evFold) UI.evFold.textContent = '—';
-      if (UI.evCall) UI.evCall.textContent = '—';
-      if (UI.evThree) UI.evThree.textContent = '—';
-
-      const mixFoldBtn = document.getElementById('mix-fold-btn');
-      const mixCallBtn = document.getElementById('mix-call-btn');
-      const mixThreeBtn = document.getElementById('mix-three-btn');
-      if (mixFoldBtn) mixFoldBtn.textContent = '—';
-      if (mixCallBtn) mixCallBtn.textContent = '—';
-      if (mixThreeBtn) mixThreeBtn.textContent = '—';
-
-      // nesta etapa, o usuário só pode clicar em RAISE.
-      updateButtonsEnabled(false);
-      UI.threeBtn.disabled = false;
-      UI.threeBtn.style.opacity = '1';
-      return;
-    }
-
-    // rfi_after_threebet: decisão após o 3BET do vilão (fold / call / 4BET mapeado como 3BET)
-    UI.lblFold.textContent = 'FOLD';
-    UI.lblCall.textContent = 'CALL 3BET';
-    UI.lblRaise.textContent = `4BET ${fourbetSize.toFixed(1)}bb`;
-
-    const mixFoldBtn = document.getElementById('mix-fold-btn');
-    const mixCallBtn = document.getElementById('mix-call-btn');
-    const mixThreeBtn = document.getElementById('mix-three-btn');
-    if (mixFoldBtn) mixFoldBtn.textContent = '—';
-    if (mixCallBtn) mixCallBtn.textContent = '—';
-    if (mixThreeBtn) mixThreeBtn.textContent = '—';
-
-    updateButtonsEnabled(true);
-  }
-
-  function resetDiagramToDefaults() {
-    const stepOpen = document.getElementById('flow-step-open');
-    const stepHero = document.getElementById('flow-step-hero');
-    const stepVill = document.getElementById('flow-step-vill');
-    const arrowVill = document.getElementById('flow-arrow-vill');
-    const stepTerminal = document.getElementById('flow-step-terminal');
-
-    if (stepOpen) stepOpen.textContent = 'PRÉ-FLOP: OPEN';
-    if (stepHero) stepHero.textContent = 'DEF';
-    if (stepVill) stepVill.textContent = '(vilão)';
-    if (arrowVill) arrowVill.classList.add('hidden');
-    if (stepTerminal) stepTerminal.textContent = '(terminal)';
-  }
-
-  function showRfiOpenDiagram() {
-    const stepOpen = document.getElementById('flow-step-open');
-    const stepHero = document.getElementById('flow-step-hero');
-    const stepVill = document.getElementById('flow-step-vill');
-    const arrowVill = document.getElementById('flow-arrow-vill');
-    const stepTerminal = document.getElementById('flow-step-terminal');
-
-    if (stepOpen) stepOpen.textContent = `PRÉ-FLOP: HERO OPEN`;
-    if (stepHero) stepHero.textContent = `Vilão responde`;
-    if (stepVill) stepVill.textContent = `(se vilão faz 3BET)`;
-    if (arrowVill) arrowVill.classList.add('hidden');
-    if (stepTerminal) stepTerminal.textContent = `(você decide)`;
-    document.getElementById('hand-flow').textContent = 'Clique em RAISE para abrir a mão (RFI).';
-  }
-
-  function showRfiAfterThreebetDiagram(actionIdx) {
-    // actionIdx: 0 fold | 1 call | 2 3bet
-    const stepOpen = document.getElementById('flow-step-open');
-    const stepHero = document.getElementById('flow-step-hero');
-    const stepVill = document.getElementById('flow-step-vill');
-    const arrowVill = document.getElementById('flow-arrow-vill');
-    const stepTerminal = document.getElementById('flow-step-terminal');
-
-    const actionName = actionLabel(actionIdx);
-
-    if (stepOpen) stepOpen.textContent = `HERO OPEN ${openSize.toFixed(1)}bb`;
-    if (stepHero) stepHero.textContent = `Vilão faz 3BET ${threeBetLabel}`;
-
-    if (actionIdx === 2) {
-      if (arrowVill) arrowVill.classList.remove('hidden');
-      if (stepVill) stepVill.textContent = 'Você: 4BET';
-      if (stepTerminal) stepTerminal.textContent = 'Vilão: fold/call';
-    } else {
-      if (arrowVill) arrowVill.classList.add('hidden');
-      if (stepVill) {
-        if (actionIdx === 0) stepVill.textContent = 'Você: FOLD';
-        else if (actionIdx === 1) stepVill.textContent = 'Você: CALL 3BET';
-        else stepVill.textContent = `Você: ${actionName}`;
-      }
-      if (stepTerminal) stepTerminal.textContent = (actionIdx === 0) ? 'Você folda' : 'Showdown';
-    }
-
-    const lineEl = document.getElementById('hand-flow');
-    if (lineEl) {
-      if (actionIdx === 0) {
-        lineEl.textContent = `FOLD → você desiste vs o 3BET do vilão. (OPEN → 3BET do vilão → FOLD).`;
-      } else if (actionIdx === 1) {
-        lineEl.textContent = `CALL → você paga e vê o showdown. (OPEN → 3BET do vilão → CALL).`;
-      } else {
-        lineEl.textContent = `4BET → você re-raise o 3BET do vilão para ${fourbetSize.toFixed(1)}bb. (OPEN → 3BET(vilão) → 4BET → vilão fold/call).`;
-      }
-    }
-  }
-
-  function showRfiAfterThreebetWaiting() {
-    const stepOpen = document.getElementById('flow-step-open');
-    const stepHero = document.getElementById('flow-step-hero');
-    const stepVill = document.getElementById('flow-step-vill');
-    const arrowVill = document.getElementById('flow-arrow-vill');
-    const stepTerminal = document.getElementById('flow-step-terminal');
-
-    if (stepOpen) stepOpen.textContent = `HERO OPEN ${openSize.toFixed(1)}bb`;
-    if (stepHero) stepHero.textContent = `Vilão faz 3BET ${threeBetLabel}`;
-    if (stepVill) stepVill.textContent = '(você decide)';
-    if (arrowVill) arrowVill.classList.add('hidden');
-    if (stepTerminal) stepTerminal.textContent = '(clique FOLD / CALL / 4BET)';
-
-    document.getElementById('hand-flow').textContent = 'Vilão 3BET. Clique em FOLD / CALL / 4BET.';
-  }
-
-  function scaleBar(barEl, value, maxAbs) {
-    // value pode ser negativo; barras só indicam magnitude (por cor já diferencia)
-    const pct = maxAbs <= 1e-12 ? 0 : Math.min(100, Math.round((Math.abs(value)/maxAbs)*100));
-    barEl.style.width = pct + '%';
-  }
-
-  function formatEv(v) {
-    const s = Number(v);
-    const sign = s > 0 ? '+' : '';
-    return `${sign}${s.toFixed(3)}bb`;
-  }
-
-  function renderRecommendation(data) {
-    const evs = data.evs; // [fold, call, three]
-    const mix = data.strategy; // [fold, call, three]
-
-    // maior EV
-    const idxEv = evs.reduce((best, x, idx) => (x > evs[best] ? idx : best), 0);
-    const idxMix = mix.reduce((best, x, idx) => (x > mix[best] ? idx : best), 0);
-
-    const actionName = i => actionLabel(i);
-
-    UI.recommendation.innerHTML = `
-      <div class="text-slate-200"><b>Maior EV:</b> ${actionName(idxEv)} (${formatEv(evs[idxEv])})</div>
-      <div class="text-slate-400 mt-1"><b>Maior mix:</b> ${actionName(idxMix)} (${(mix[idxMix]*100).toFixed(0)}%)</div>
-    `;
-  }
-
-  function renderSolverBars(data) {
-    const evs = data.evs;
-    const mix = data.strategy;
-
-    const maxAbs = Math.max(Math.abs(evs[0]), Math.abs(evs[1]), Math.abs(evs[2]), 1e-9);
-
-    UI.evFold.textContent = formatEv(evs[0]);
-    UI.evCall.textContent = formatEv(evs[1]);
-    UI.evThree.textContent = formatEv(evs[2]);
-
-    const evsStd = Array.isArray(data.evs_std) ? data.evs_std : null;
-    if (evsStd && evsStd.length >= 3) {
-      const evFoldStd = document.getElementById('ev-fold-std');
-      const evCallStd = document.getElementById('ev-call-std');
-      const evThreeStd = document.getElementById('ev-three-std');
-      if (evFoldStd) evFoldStd.textContent = evsStd[0].toFixed(3);
-      if (evCallStd) evCallStd.textContent = evsStd[1].toFixed(3);
-      if (evThreeStd) evThreeStd.textContent = evsStd[2].toFixed(3);
-    }
-
-    // Aviso visual de baixa confiança (z-score com std + EV-gap)
-    const warnEl = document.getElementById('uncertainty-warning');
-    const evGapEl = document.getElementById('ev-gap');
-
-    const stds = evsStd || [0, 0, 0];
-    const maxAbsEv = Math.max(Math.abs(evs[0] || 0), Math.abs(evs[1] || 0), Math.abs(evs[2] || 0), 1e-9);
-
-    // melhor vs 2ª melhor EV (assume EVs numéricas)
-    const idxBest = evs.reduce((best, x, idx) => (x > evs[best] ? idx : best), 0);
-    const candidates = [0, 1, 2].filter(i => i !== idxBest);
-    const idxSecond = (evs[candidates[0]] >= evs[candidates[1]]) ? candidates[0] : candidates[1];
-
-    const evBest = Number(evs[idxBest]) || 0;
-    const evSecond = Number(evs[idxSecond]) || 0;
-    const evGap = evBest - evSecond;
-
-    if (evGapEl) evGapEl.textContent = formatEv(evGap);
-
-    // z = gap / sqrt(std_best^2 + std_second^2)
-    const sBest = Math.abs(Number(stds[idxBest]) || 0);
-    const sSecond = Math.abs(Number(stds[idxSecond]) || 0);
-    const sigmaComb = Math.sqrt(sBest * sBest + sSecond * sSecond);
-    const z = evGap / Math.max(sigmaComb, 1e-9);
-
-    const maxStd = Math.max(Math.abs(stds[0] || 0), Math.abs(stds[1] || 0), Math.abs(stds[2] || 0));
-    const relStd = maxStd / maxAbsEv;
-    const highUncertainty = maxStd >= 0.25 || relStd >= 0.35;
-
-    // Threshold empírico: z<1 indica que o “gap” é menor do que 1 desvio combinado.
-    const lowConfidence = (z < 1.0) || highUncertainty;
-
-    if (warnEl) {
-      warnEl.classList.toggle('hidden', !lowConfidence);
-    }
-
-    UI.mixFold.textContent = (mix[0]*100).toFixed(0) + '%';
-    UI.mixCall.textContent = (mix[1]*100).toFixed(0) + '%';
-    UI.mixThree.textContent = (mix[2]*100).toFixed(0) + '%';
-
-    const mixFoldBtn = document.getElementById('mix-fold-btn');
-    const mixCallBtn = document.getElementById('mix-call-btn');
-    const mixThreeBtn = document.getElementById('mix-three-btn');
-    if (mixFoldBtn) mixFoldBtn.textContent = UI.mixFold.textContent;
-    if (mixCallBtn) mixCallBtn.textContent = UI.mixCall.textContent;
-    if (mixThreeBtn) mixThreeBtn.textContent = UI.mixThree.textContent;
-
-    scaleBar(UI.barFold, evs[0], maxAbs);
-    scaleBar(UI.barCall, evs[1], maxAbs);
-    scaleBar(UI.barThree, evs[2], maxAbs);
-
-    // Highlight da ação de maior EV
-    [UI.foldBtn, UI.callBtn, UI.threeBtn].forEach(b => b.classList.remove('action-best'));
-    const idxEv = evs.reduce((best, x, idx) => (x > evs[best] ? idx : best), 0);
-    [UI.foldBtn, UI.callBtn, UI.threeBtn][idxEv].classList.add('action-best');
-
-    renderRecommendation(data);
-  }
-
-  function actionLabel(i) {
-    // No modo RFI, após o vilão fazer 3BET, a terceira ação corresponde a 4BET (re-raise).
-    if (activeSpot && activeSpot.chosenSpotType === 'rfi' && activeStage === 'rfi_after_threebet' && i === 2) {
-      return '4BET';
-    }
-    return i === 0 ? 'FOLD' : i === 1 ? 'CALL' : '3BET';
-  }
-
-  function villainOpenPosForHero(heroPosSolver) {
-    if (heroPosSolver === 'CO') return 'UTG';
-    if (heroPosSolver === 'BTN') return 'CO';
-    return 'BTN';
-  }
-
-  function normalizeHeroPosForSolver(heroPos) {
-    // Mode 1 só modela defensor: CO/BTN/BB.
-    if (heroPos === 'SB') return 'BB';
-    if (heroPos === 'UTG') return 'CO';
-    if (defenderPositions.includes(heroPos)) return heroPos;
-    return 'CO';
-  }
-
-  function getFacingBet(heroPosSolver) {
-    const heroPosted = (heroPosSolver === 'BB') ? 1.0 : 0.0;
-    return openSize - heroPosted;
-  }
-
-  async function gerarProximoSpot() {
-    if (isLocked) return;
-    isLocked = true;
-    UI.generate.disabled = true;
-
-    // decide tipo de spot (auto/defend/rfi)
-    const spotTypeSel = document.getElementById('spot-type');
-    const spotTypeMode = spotTypeSel ? spotTypeSel.value : 'auto';
-    let chosenSpotType = spotTypeMode;
-    if (spotTypeMode === 'auto') {
-      chosenSpotType = (Math.random() < 0.5) ? 'defend' : 'rfi';
-    }
-
-    // activeStage controla a etapa visual + quais botões fazem sentido.
-    // defend: você responde FOLD/CALL/3BET ao OPEN do vilão.
-    // rfi_open_wait: hero abre (apenas mostra RAISE).
-    // rfi_after_threebet: após o vilão fazer o raise, hero decide FOLD/CALL/3BET.
-    activeStage = (chosenSpotType === 'rfi') ? 'rfi_open_wait' : 'defend';
-
-    // reset UI
-    // No RFI a EV só vale depois do 3BET do vilão. Esconde o painel na etapa OPEN.
-    if (chosenSpotType === 'rfi') {
-      UI.barsBox.classList.add('hidden');
-    } else {
-      UI.barsBox.classList.remove('hidden');
-    }
-    UI.recommendation.textContent = '—';
-    const warnElReset = document.getElementById('uncertainty-warning');
-    if (warnElReset) warnElReset.classList.add('hidden');
-    UI.evFold.textContent = '—';
-    UI.evCall.textContent = '—';
-    UI.evThree.textContent = '—';
-
-    const evFoldStd = document.getElementById('ev-fold-std');
-    const evCallStd = document.getElementById('ev-call-std');
-    const evThreeStd = document.getElementById('ev-three-std');
-    if (evFoldStd) evFoldStd.textContent = '—';
-    if (evCallStd) evCallStd.textContent = '—';
-    if (evThreeStd) evThreeStd.textContent = '—';
-    UI.mixFold.textContent = '—';
-    UI.mixCall.textContent = '—';
-    UI.mixThree.textContent = '—';
-
-    // também zera os labels de mix nos botões (evita “sticky state”)
-    const mixFoldBtn = document.getElementById('mix-fold-btn');
-    const mixCallBtn = document.getElementById('mix-call-btn');
-    const mixThreeBtn = document.getElementById('mix-three-btn');
-    if (mixFoldBtn) mixFoldBtn.textContent = '—';
-    if (mixCallBtn) mixCallBtn.textContent = '—';
-    if (mixThreeBtn) mixThreeBtn.textContent = '—';
-
-    [UI.foldBtn, UI.callBtn, UI.threeBtn].forEach(b => b.classList.remove('action-best'));
-
-    UI.barFold.style.width = '0%';
-    UI.barCall.style.width = '0%';
-    UI.barThree.style.width = '0%';
-
-    // limpa quaisquer “mix%”/destaques que possam vir de um spot DEFEND anterior
-    UI.foldBtn.classList.remove('action-best');
-    UI.callBtn.classList.remove('action-best');
-    UI.threeBtn.classList.remove('action-best');
-    const mixFoldBtnReset = document.getElementById('mix-fold-btn');
-    const mixCallBtnReset = document.getElementById('mix-call-btn');
-    const mixThreeBtnReset = document.getElementById('mix-three-btn');
-    if (mixFoldBtnReset) mixFoldBtnReset.textContent = '—';
-    if (mixCallBtnReset) mixCallBtnReset.textContent = '—';
-    if (mixThreeBtnReset) mixThreeBtnReset.textContent = '—';
-
-    updateButtonsEnabled(false);
-
-    UI.recommendation.textContent = 'Carregando solver...';
-
-    const filterPos = document.getElementById('filter-hero-pos').value;
-    const stackSel = document.getElementById('filter-stack');
-    const allowedStacks = [20, 40, 100, 200];
-    let selectedStack = parseInt(stackSel ? stackSel.value : '100', 10);
-    if (!allowedStacks.includes(selectedStack)) selectedStack = 100;
-    let heroPosDisplay = filterPos === 'ANY'
-      ? defenderPositions[Math.floor(Math.random()*defenderPositions.length)]
-      : filterPos;
-
-    let heroPosSolver = normalizeHeroPosForSolver(heroPosDisplay);
-    if (!defenderPositions.includes(heroPosSolver)) {
-      heroPosSolver = 'CO';
-    }
-    heroPosDisplay = heroPosSolver;
-
-    // Convenção: no modo DEFEND você é o defensor vs OPEN.
-    // No modo RFI (placeholder), mantemos a mesma função só para labels de posição.
-    const villainOpenPos = villainOpenPosForHero(heroPosSolver);
-    const oppPos = villainOpenPos;
-
-    // mão
-    const cards = pickRandomHand();
-    renderHeroCards(cards);
-
-    const face = getFacingBet(heroPosSolver);
-
-    UI.posBadge.textContent = (chosenSpotType === 'rfi')
-      ? `HERO OPEN (RFI) em ${heroPosDisplay}`
-      : `${heroPosDisplay} vs ${villainOpenPos} open`;
-
-    UI.potDisplay.textContent = `POT: ${potPre.toFixed(1)} BB`;
-
-    if (chosenSpotType === 'rfi') {
-      UI.handDesc.textContent = `PRÉ-FLOP MODE 1 • Você é o agressor inicial (RFI) em ${heroPosDisplay}. Linha: OPEN → Vilão 3BET → decisão (FOLD / CALL / 4BET). Mão: ${comboLabel(cards)}.`;
-    } else {
-      UI.handDesc.textContent = `PRÉ-FLOP MODE 1 • Você é o DEFENSOR em ${heroPosDisplay} vs OPEN de ${villainOpenPos} (2.2bb). Ações: FOLD / CALL / 3BET. Mão: ${comboLabel(cards)}.`;
-    }
-    document.getElementById('hero-class-badge').textContent = '...';
-    const stackBadge = document.getElementById('stack-badge');
-    if (stackBadge) stackBadge.textContent = `${selectedStack}bb`;
-    const villEl = document.getElementById('vill-open-pos');
-    if (villEl) villEl.textContent = villainOpenPos;
-
-    // Explicação clara de de onde vem o raise (open) no Mode 1
-    const openFromEl = document.getElementById('open-from');
-    if (openFromEl) {
-      if (chosenSpotType === 'rfi') {
-        openFromEl.textContent = 'OPEN do herói (RFI): 2.2bb.';
-      } else {
-        openFromEl.textContent = 'OPEN fixo do vilão: 2.2bb (está no modelo do solver).';
-      }
-    }
-
-    const villRangeSourceEl = document.getElementById('vill-open-range-source');
-    if (villRangeSourceEl) {
-      villRangeSourceEl.textContent = `Open pos: ${villainOpenPos} (range 169-buckets)`;
-    }
-
-    // Pílulas (ajuda visual)
-    if (chosenSpotType === 'rfi') {
-      // No placeholder RFI ainda não existe EV; apenas alinhar labels/fluxo.
-      document.getElementById('facing-pill').textContent = `OPEN ${openSize.toFixed(1)}bb`;
-      document.getElementById('raise-pill').textContent = `depois: vs 3BET`;
-
-      UI.lblFold.textContent = 'FOLD';
-      UI.lblCall.textContent = `CALL`;
-      UI.lblRaise.textContent = `RAISE OPEN ${openSize.toFixed(1)}bb`;
-      const evThreeTitle = document.getElementById('ev-three-title');
-      if (evThreeTitle) evThreeTitle.textContent = '3BET (depois)';
-    } else {
-      const facing = getFacingBet(heroPosSolver);
-      document.getElementById('facing-pill').textContent = `${facing.toFixed(1)} BB to call`;
-      document.getElementById('raise-pill').textContent = `3BET ${threeBetLabel}`;
-
-      UI.lblFold.textContent = 'FOLD';
-      UI.lblCall.textContent = `CALL ${face.toFixed(1)} BB`;
-      UI.lblRaise.textContent = `3BET ${threeBetLabel}`;
-      const evThreeTitle = document.getElementById('ev-three-title');
-      if (evThreeTitle) evThreeTitle.textContent = '3BET';
-    }
-
-    // estado
-    activeSpot = {
-      heroPos: heroPosDisplay,
-      heroPosSolver,
-      oppPos,
-      cards,
-      facingBet: face,
-      chosenSpotType,
-      effectiveStack: selectedStack,
-      evs: [0,0,0],
-      strategy: [1/3,1/3,1/3],
-      source_mode: null,
-    };
-
-    if (chosenSpotType === 'rfi') {
-      // Start diagram in HERO OPEN stage and only enable RAISE (OPEN).
-      resetDiagramToDefaults();
-      showRfiOpenDiagram();
-      setButtonsForStage();
-
-      // Hide defender-only villain-open range widgets.
-      const villPosSpan = document.getElementById('vill-open-pos');
-      const villRangeSpan = document.getElementById('vill-open-range-source');
-      if (villPosSpan && villPosSpan.parentElement) villPosSpan.parentElement.style.display = 'none';
-      if (villRangeSpan && villRangeSpan.parentElement) villRangeSpan.parentElement.style.display = 'none';
-    } else {
-      // Volta o diagrama/labels para o DEFEND (defensor vs OPEN).
-      resetDiagramToDefaults();
-      document.getElementById('hand-flow').textContent = 'Clique em FOLD / CALL / 3BET para ver a linha vs o OPEN.';
-
-      const villPosSpan = document.getElementById('vill-open-pos');
-      const villRangeSpan = document.getElementById('vill-open-range-source');
-      if (villPosSpan && villPosSpan.parentElement) villPosSpan.parentElement.style.display = '';
-      if (villRangeSpan && villRangeSpan.parentElement) villRangeSpan.parentElement.style.display = '';
-    }
-
-    const calls = parseInt(UI.statusCalls.textContent, 10);
-    UI.statusCalls.textContent = (isNaN(calls) ? 0 : calls) + 1;
-
-    UI.barsBox.scrollIntoView({behavior:'smooth', block:'nearest'});
-
-    // Atualiza diagnóstico v2 (sem travar a geração)
-    try {
-      const DIAG_URL = (window.location.protocol === 'file:')
-        ? 'http://localhost:8000/api/status_mode1_v2.php'
-        : new URL('/api/status_mode1_v2.php', window.location.origin).toString();
-
-      fetch(DIAG_URL)
-        .then(r => r.json())
-        .then(d => {
-          const el = document.getElementById('v2-files-count');
-          if (!el || !d) return;
-          el.textContent = `${d.v2_files_existing}/${d.v2_files_total}`;
-        })
-        .catch(() => {});
-    } catch (_) {}
-
-    setFeedback('Rodando GTO pré-flop offline...');
-    document.getElementById('hand-flow').textContent = 'Rodando solver… escolha aparecerá quando terminar.';
-
-    try {
-      const API_URL = (window.location.protocol === 'file:')
-        ? 'http://localhost:8000/api/query_preflop_gto.php'
-        : new URL('/api/query_preflop_gto.php', window.location.origin).toString();
-      const heroCardsStr = [
-        `${cards[0].r}${cards[0].s}`,
-        `${cards[1].r}${cards[1].s}`
-      ];
-
-      const resp = await fetch(API_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json; charset=utf-8' },
-        body: JSON.stringify({
-          heroPos: heroPosSolver,
-          heroCards: heroCardsStr,
-          villOpenPos: villainOpenPos,
-          spotType: chosenSpotType === 'rfi' ? 'rfi' : 'defend',
-          effectiveStack: selectedStack,
-          rangeProfile: (document.getElementById('filter-range-profile')?.value || 'standard')
-        })
+    function renderBoardCards() {
+      const container = document.getElementById('board-cards-container');
+      container.innerHTML = '';
+      currentBoard.forEach(c => {
+        const cardEl = createCardElement(c, true);
+        if (cardEl) container.appendChild(cardEl);
       });
 
-      if (!resp.ok) {
-        const txt = await resp.text().catch(() => '');
-        throw new Error(`HTTP ${resp.status} ${resp.statusText}${txt ? ' • ' + txt : ''}`);
+      const streetLabel = document.getElementById('postflop-street-label');
+      if (streetLabel) {
+        streetLabel.textContent = currentBoard.length === 3 ? 'FLOP' : (currentBoard.length === 4 ? 'TURN' : 'RIVER');
       }
 
-      const data = await resp.json();
-      if (data.error) throw new Error(String(data.error));
+      // Update enable state of Turn/River buttons
+      const btnAddTurn = document.getElementById('btn-add-turn');
+      const btnAddRiver = document.getElementById('btn-add-river');
+      // Em mão contínua, as streets devem avançar via ações no nó (não via "deal aleatório").
+      // Se a mão já terminou, manter Turn/River desabilitados.
+      const isContinuous = continuedFromPreflop;
+      if (btnAddTurn) btnAddTurn.disabled = handEnded || isContinuous || currentBoard.length >= 4;
+      if (btnAddRiver) btnAddRiver.disabled = handEnded || isContinuous || currentBoard.length < 4 || currentBoard.length >= 5;
 
-      if (data.source_mode === 'legacy') {
-        setFeedback('Aviso: usando modo LEGACY (open do vilão não ajusta a range). Gere os novos JSONs .json', 'err');
-      }
+      // Update texture badge
+      updateBoardTextureBadge();
+    }
 
-      if (data.source_mode === 'rfi_placeholder') {
-        setFeedback(data.warning || 'RFI placeholder: sem EV/estratégia ainda. Gere os JSONs com mode1_generate_rfi_v2.py.', 'err');
-      }
+    function renderPostflopHeroCards() {
+      const container = document.getElementById('postflop-hero-cards');
+      container.innerHTML = '';
+      currentHeroCards.forEach(c => {
+        const cardEl = createCardElement(c, false);
+        if (cardEl) container.appendChild(cardEl);
+      });
+    }
 
-      // data: {hero_class, evs:[fold,call,three], strategy:[fold,call,three]}
-      activeSpot.evs = data.evs;
-      activeSpot.evs_std = Array.isArray(data.evs_std) ? data.evs_std : [0, 0, 0];
-      activeSpot.strategy = data.strategy;
-      activeSpot.source_mode = data.source_mode || null;
-      document.getElementById('hero-class-badge').textContent = data.hero_class || '—';
-      const stackUsed = data.effective_stack_used != null ? data.effective_stack_used : selectedStack;
-      const stackBadgeAfter = document.getElementById('stack-badge');
-      if (stackBadgeAfter) {
-        const src = data.source_file ? ` • ${data.source_file}` : '';
-        stackBadgeAfter.textContent = `${stackUsed}bb${src}`;
-      }
+    function updateBoardTextureBadge() {
+      const badge = document.getElementById('board-texture-badge');
+      if (!badge) return;
+      const ranks = currentBoard.map(c => c[0]);
+      const suits = currentBoard.map(c => c[1]);
 
-      // Label do 3BET baseado no grid interno do solver (contrato externo continua como 1 ação: "threebet")
-      if (Array.isArray(data.threebet_options) && data.threebet_options.length) {
-        threeBetLabel = computeThreeBetLabel(data.threebet_options);
-        const globalLabel = document.getElementById('threebet-global-label');
-        if (globalLabel) globalLabel.textContent = threeBetLabel;
-      }
+      const suitCounts = {};
+      suits.forEach(s => suitCounts[s] = (suitCounts[s] || 0) + 1);
+      const maxSuit = Math.max(...Object.values(suitCounts));
 
-      // Atualiza rótulos do DEFEND que dependem do label
-      if (chosenSpotType !== 'rfi') {
-        const raisePill = document.getElementById('raise-pill');
-        if (raisePill) raisePill.textContent = `3BET ${threeBetLabel}`;
-        if (UI.lblRaise) UI.lblRaise.textContent = `3BET ${threeBetLabel}`;
-      }
-
-      // Atualiza range/pos do vilão apenas no modo DEFEND
-      const villRangeSourceEl = document.getElementById('vill-open-range-source');
-      if (villRangeSourceEl && chosenSpotType !== 'rfi') {
-        const src = data.source_file ? ` • JSON: ${data.source_file}` : '';
-        villRangeSourceEl.textContent = `Open pos: ${data.vill_open_pos || villainOpenPos} (range 169-buckets)${src}`;
-      }
-
-      if (chosenSpotType !== 'rfi') {
-        // Render de barras depende de EV/strategy, mas o label de 3BET foi atualizado acima.
-        // (EV-gap + std já são derivados em renderSolverBars)
-        renderSolverBars(data);
-        setFeedback('GTO pronto. Escolha a melhor ação para treinar. ✅', 'ok');
-        updateButtonsEnabled(true);
+      if (maxSuit >= 3) {
+        badge.textContent = maxSuit >= 4 ? '4-Flush Board' : 'Monotone Board';
+        badge.className = 'text-[11px] px-2 py-0.5 rounded bg-blue-500/20 text-blue-300 border border-blue-500/30';
+      } else if (new Set(ranks).size < ranks.length) {
+        badge.textContent = 'Paired Board';
+        badge.className = 'text-[11px] px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30';
+      } else if (ranks.includes('A')) {
+        badge.textContent = 'Ace-High Board';
+        badge.className = 'text-[11px] px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/30';
       } else {
-        // RFI: o diagrama/labels usam threeBetLabel no stage após 3BET do vilão.
-        setButtonsForStage();
-        if (data.source_mode === 'rfi_v2') {
-          setFeedback('RFI pronto. Clique em RAISE OPEN; EV aparece depois do 3BET do vilão. ✅', 'ok');
+        badge.textContent = 'Connected / Dynamic';
+        badge.className = 'text-[11px] px-2 py-0.5 rounded bg-slate-800 text-slate-300';
+      }
+    }
+
+    // =========================================================================
+    // POSTFLOP SOLVER & TREE ENGINE
+    // =========================================================================
+    async function solvePostflopCurrentSpot() {
+      if (isSolvingPostflop) return;
+      isSolvingPostflop = true;
+
+      const solveBtn = document.getElementById('btn-solve-postflop');
+      const spinner = document.getElementById('postflop-btn-spinner');
+      if (spinner) spinner.classList.remove('hidden');
+      if (solveBtn) solveBtn.disabled = true;
+
+      // New street decision tree: require user to resolve it via node actions
+      streetCanAdvance = false;
+
+      const spotVal = document.getElementById('postflop-spot-select')?.value || 'BB_vs_BTN';
+      const parts = spotVal.split('_vs_');
+
+      const heroPos = (continuedFromPreflop && lastPreflopSpot)
+        ? lastPreflopSpot.heroPos
+        : (parts[0] || 'BB');
+      const villOpenPos = (continuedFromPreflop && lastPreflopSpot)
+        ? lastPreflopSpot.villPos
+        : (parts[1] || 'BTN');
+
+      const stack = (continuedFromPreflop && lastPreflopSpot)
+        ? (effectiveStackOverride ?? lastPreflopSpot.stack)
+        : parseInt(document.getElementById('postflop-stack-select')?.value || '100', 10);
+      currentEffectiveStackUsed = stack;
+
+      // Initialize per-player stacks for a new continuous-hand street.
+      // We only overwrite when we don't yet have a tracked stack state.
+      if (currentOopStackRemaining === null || currentIpStackRemaining === null) {
+        currentOopStackRemaining = stack;
+        currentIpStackRemaining = stack;
+      }
+
+      const iters = parseInt(document.getElementById('postflop-iters-select')?.value || '150', 10);
+      const equityIters = (iters <= 80) ? 8 : ((iters <= 150) ? 12 : 20);
+      const allowDonk = document.getElementById('allow-donk-check')?.checked || false;
+
+      const openSizeUsed = (continuedFromPreflop && lastPreflopSpot)
+        ? (openSizeUsedOverride ?? lastPreflopSpot.openSize)
+        : (openSize || 2.2);
+
+      try {
+        const API_URL = (window.location.protocol === 'file:')
+          ? 'http://localhost:8000/api/query_postflop_gto.php'
+          : new URL('/api/query_postflop_gto.php', window.location.origin).toString();
+
+        const reqBody = {
+          board: currentBoard,
+          heroCards: currentHeroCards,
+          heroPos: heroPos,
+          villOpenPos: villOpenPos,
+          effectiveStack: stack,
+          openSize: openSizeUsed,
+          iterations: iters,
+          equity_iters: equityIters,
+          pot_pre_override: (continuedFromPreflop ? (potPreOverride ?? undefined) : undefined),
+          // Hand-continuous investments from preflop
+          oop_invested_pre: (continuedFromPreflop && oopInvestedPre != null) ? oopInvestedPre : undefined,
+          ip_invested_pre: (continuedFromPreflop && ipInvestedPre != null) ? ipInvestedPre : undefined,
+          preflop_action: continuedFromPreflop ? continuedFromPreflopAction : undefined,
+          betConfig: {
+            // Aggressive profile grids (server also expands partial payloads)
+            oop_lead_sizes: [0.33, 0.5, 0.75],
+            ip_cbet_sizes: [0.25, 0.33, 0.5, 0.75],
+            check_raise_sizes: [1.5, 2.0, 2.5, 3.0, 4.0],
+            ip_raise_sizes: [1.5, 2.0, 2.5, 3.0, 4.0],
+            allow_donk: allowDonk,
+            max_raises_per_street: 2,
+          }
+        };
+
+        const resp = await fetch(API_URL, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(reqBody)
+        });
+
+        if (!resp.ok) {
+          throw new Error(`HTTP ${resp.status}: ${resp.statusText}`);
+        }
+
+        const data = await resp.json();
+        postflopResults = data;
+
+        renderPostflopResults();
+      } catch (err) {
+        console.error('Postflop solve error:', err);
+        alert('Erro ao calcular solução pós-flop: ' + err.message);
+      } finally {
+        isSolvingPostflop = false;
+        if (spinner) spinner.classList.add('hidden');
+        if (solveBtn) solveBtn.disabled = false;
+      }
+    }
+
+    function renderPostflopResults() {
+      if (!postflopResults) return;
+
+      // Update Hand Category Badges for Hero
+      const heroInfo = postflopResults.hero_hand_info || {};
+      const catBadge = document.getElementById('postflop-hero-cat-badge');
+      const drawBadge = document.getElementById('postflop-hero-draw-badge');
+
+      if (catBadge) catBadge.textContent = heroInfo.category || 'High Card';
+      if (drawBadge) {
+        if (heroInfo.draw) {
+          drawBadge.textContent = heroInfo.draw;
+          drawBadge.classList.remove('hidden');
         } else {
-          setFeedback(data.warning || 'RFI placeholder: fluxo por stage sem EV. ✅', 'ok');
+          drawBadge.classList.add('hidden');
         }
       }
 
-      const ok = parseInt(UI.statusOk.textContent, 10);
-      UI.statusOk.textContent = (isNaN(ok) ? 0 : ok) + 1;
+      // Render Categories
+      renderCategoryDistribution('oop', postflopResults.oop_category_distribution);
+      renderCategoryDistribution('ip', postflopResults.ip_category_distribution);
 
-    } catch (e) {
-      console.error(e);
-      setFeedback('Falha no solver: ' + (e && e.message ? e.message : String(e)), 'err');
+      // Render Active Node Strategy
+      renderActiveNodeStrategy();
 
-      const err = parseInt(UI.statusErr.textContent, 10);
-      UI.statusErr.textContent = (isNaN(err) ? 0 : err) + 1;
+      // Render 169-matrix for active node
+      renderStrategyMatrix();
 
-      // manter botões desabilitados
-      updateButtonsEnabled(false);
-      UI.recommendation.textContent = '—';
-      const warnElErr = document.getElementById('uncertainty-warning');
-      if (warnElErr) warnElErr.classList.add('hidden');
-    } finally {
-      isLocked = false;
-      UI.generate.disabled = false;
-    }
-  }
-
-  function handleAction(actionIdx) {
-    // antes de atualizar a linha, zera o diagrama
-    if (!activeSpot) return;
-
-    resetDiagramToDefaults();
-
-    const evs = activeSpot.evs;
-    const facing = activeSpot.facingBet;
-
-    const isRfi = activeSpot.chosenSpotType === 'rfi';
-    const isPlaceholderRfi = activeSpot.source_mode === 'rfi_placeholder';
-    const hasRfiSolver = isRfi && activeSpot.source_mode === 'rfi_v2';
-
-    // Na etapa OPEN do RFI nunca destacar CALL/FOLD (EV só existe vs 3BET).
-    if (isRfi && activeStage === 'rfi_open_wait') {
-      [UI.foldBtn, UI.callBtn, UI.threeBtn].forEach(b => b.classList.remove('action-best'));
-      const mixFoldBtn2 = document.getElementById('mix-fold-btn');
-      const mixCallBtn2 = document.getElementById('mix-call-btn');
-      const mixThreeBtn2 = document.getElementById('mix-three-btn');
-      if (mixFoldBtn2) mixFoldBtn2.textContent = '—';
-      if (mixCallBtn2) mixCallBtn2.textContent = '—';
-      if (mixThreeBtn2) mixThreeBtn2.textContent = '—';
+      // Allow the user to resolve node actions.
+      streetCanAdvance = true;
     }
 
-    let actionName = actionLabel(actionIdx);
-    // em RFI open, ação válida é apenas RAISE (OPEN)
-    if (isRfi && activeStage === 'rfi_open_wait') {
-      if (actionIdx === 2) actionName = 'RAISE (OPEN)';
+    function renderCategoryDistribution(player, dist) {
+      const listEl = document.getElementById(`${player}-category-list`);
+      if (!listEl || !dist) return;
+
+      listEl.innerHTML = '';
+      const entries = Object.entries(dist).slice(0, 6);
+      entries.forEach(([cat, freq]) => {
+        const pct = (freq * 100).toFixed(1);
+        const row = document.createElement('div');
+        row.className = 'flex items-center justify-between text-xs';
+        row.innerHTML = `
+          <span class="text-slate-300 truncate max-w-[140px]">${cat}</span>
+          <div class="flex items-center gap-2 flex-1 max-w-[140px] ml-2">
+            <div class="w-full bg-slate-950 rounded h-1.5 overflow-hidden">
+              <div class="bg-emerald-400 h-full" style="width: ${pct}%"></div>
+            </div>
+            <span class="font-mono text-[11px] text-slate-400 w-10 text-right">${pct}%</span>
+          </div>
+        `;
+        listEl.appendChild(row);
+      });
     }
 
-    const ev = (evs && evs.length >= 3) ? evs[actionIdx] : 0;
+    function renderActiveNodeStrategy() {
+      if (!postflopResults || !postflopResults.nodes) return;
+      const node = postflopResults.nodes[activeNodeId] || postflopResults.nodes["root"];
+      if (!node) return;
 
-    const lineEl = document.getElementById('hand-flow');
+      // Keep node-tab highlight in sync with activeNodeId
+      document.querySelectorAll('.node-tab').forEach((b) => {
+        const isActive = b.getAttribute('data-node') === activeNodeId;
+        b.className = isActive
+          ? 'node-tab active px-2 py-2 text-xs font-semibold rounded-lg border border-emerald-500 bg-emerald-500/20 text-emerald-300 transition-all text-center'
+          : 'node-tab px-2 py-2 text-xs font-semibold rounded-lg border border-slate-800 bg-slate-950 text-slate-400 hover:text-white transition-all text-center';
+      });
 
-    const stepOpen = document.getElementById('flow-step-open');
-    const stepHero = document.getElementById('flow-step-hero');
-    const stepVill = document.getElementById('flow-step-vill');
-    const arrowVill = document.getElementById('flow-arrow-vill');
-    const stepTerminal = document.getElementById('flow-step-terminal');
+      const potEl = document.getElementById('postflop-node-pot');
+      const badgeEl = document.getElementById('active-node-badge');
+      const playerEl = document.getElementById('node-player-badge');
+      const barsContainer = document.getElementById('node-action-bars');
+      const recEl = document.getElementById('hero-node-recommendation');
 
-    if (isRfi && activeStage === 'rfi_open_wait') {
-      UI.recommendation.innerHTML = `
-        <div class="text-slate-200"><b>Você escolheu:</b> ${actionName}</div>
-      `;
-    } else {
-      UI.recommendation.innerHTML = `
-        <div class="text-slate-200"><b>Você escolheu:</b> ${actionName}</div>
-        <div class="text-slate-400 mt-1">EV estimado: ${formatEv(ev)}</div>
-      `;
-    }
+      if (potEl) potEl.textContent = `${Number(node.pot).toFixed(1)} BB`;
+      if (badgeEl) badgeEl.textContent = `Node: ${node.node_id} (${node.player})`;
+      if (playerEl) playerEl.textContent = `${node.player} (${node.player === 'OOP' ? postflopResults.oop_pos : postflopResults.ip_pos})`;
 
-    // default: esconde branch do vilão (e 4BET)
-    if (stepVill) stepVill.textContent = '(vilão)';
-    if (arrowVill) arrowVill.classList.add('hidden');
+      // Hero specific combo strategy
+      const heroComboKey = `${currentHeroCards[0]}${currentHeroCards[1]}`;
+      const heroComboKeyRev = `${currentHeroCards[1]}${currentHeroCards[0]}`;
+      const heroStrat = (node.combo_strategies && (node.combo_strategies[heroComboKey] || node.combo_strategies[heroComboKeyRev])) || {};
 
-    if (isRfi) {
-      // RFI placeholder: o fluxo muda por stage.
-      if (activeStage === 'rfi_open_wait') {
-        // primeira decisão: apenas RAISE (OPEN) do herói
-        if (actionIdx !== 2) {
-          if (stepTerminal) stepTerminal.textContent = '(clique em RAISE)';
-          if (lineEl) lineEl.textContent = 'No RFI, a primeira ação é RAISE (OPEN).';
-          // garante que a UI não “pareça” que CALL/FOLD é a melhor opção
-          return;
+      // EV by action for hero (new: recommend by EV, not frequency)
+      const heroActionEvs = node.hero_action_evs || {};
+
+      // Find best action for Hero by EV (not frequency)
+      let bestAct = "";
+      let bestEv = -Infinity;
+      Object.entries(heroActionEvs).forEach(([act, ev]) => {
+        if (ev > bestEv) {
+          bestEv = ev;
+          bestAct = act;
         }
+      });
 
-        showRfiOpenDiagram();
-        activeStage = 'rfi_after_threebet';
-        setButtonsForStage();
-        showRfiAfterThreebetWaiting();
+      // Format EV display
+      const formatEv = (ev) => {
+        if (ev === null || ev === undefined || isNaN(ev)) return "—";
+        const sign = ev >= 0 ? "+" : "";
+        return `${sign}${ev.toFixed(3)}`;
+      };
 
-        if (hasRfiSolver && Array.isArray(activeSpot.evs) && Array.isArray(activeSpot.strategy)) {
-          UI.barsBox.classList.remove('hidden');
-          const evThreeTitle = document.getElementById('ev-three-title');
-          if (evThreeTitle) evThreeTitle.textContent = '4BET';
-          renderSolverBars({
-            evs: activeSpot.evs,
-            strategy: activeSpot.strategy,
-            evs_std: activeSpot.evs_std || [0, 0, 0],
+      const isDoubleRaiseLine = !!(
+        node.node_id &&
+        ((node.node_id.match(/raise_/g) || []).length >= 2)
+      );
+      const lineBadge = isDoubleRaiseLine
+        ? ` <span class="text-[11px] text-sky-300/90 ml-2 border border-sky-500/30 bg-sky-500/10 px-2 py-0.5 rounded">2ª raise</span>`
+        : "";
+
+      if (recEl) {
+        if (!bestAct) {
+          recEl.innerHTML = `GTO Recomenda com ${heroComboKey}: <span class="text-amber-300">— (EV indisponível)</span>${lineBadge}`;
+        } else {
+          const actLabel = formatActionName(bestAct);
+          const evDisplay = bestEv !== -Infinity ? ` (EV: ${formatEv(bestEv)})` : "";
+          recEl.innerHTML = `GTO Recomenda com ${heroComboKey}: <span class="text-emerald-400">${actLabel}${evDisplay}</span>${lineBadge}`;
+        }
+      }
+
+      // Uncertainty / diagnostics (EV gap + why hero EV might be missing)
+      const uncertaintyEl = document.getElementById('uncertainty-warning');
+      const uncertaintyMetrics = document.getElementById('uncertainty-metrics');
+      if (uncertaintyEl && uncertaintyMetrics) {
+        const diag = node.hero_diag || {};
+        const evValues = Object.values(heroActionEvs)
+          .filter(v => typeof v === 'number' && isFinite(v));
+
+        if (!evValues.length) {
+          uncertaintyEl.classList.remove('hidden');
+
+          if (diag.hero_combo_present === false) {
+            uncertaintyMetrics.textContent = 'hero combo não encontrado no range do seat do herói.';
+          } else if (diag.hero_side_match === false) {
+            uncertaintyMetrics.textContent = 'node do lado oposto (OOP/IP mismatch) para o herói.';
+          } else if ((diag.hero_weight_sum || 0) <= 0.0) {
+            uncertaintyMetrics.textContent = 'peso/reach do hero no nó é 0 (EV indisponível).';
+          } else {
+            uncertaintyMetrics.textContent = 'EV indisponível (sem valores numéricos).';
+          }
+        } else {
+          // Gap between best and 2nd-best EV
+          let top1 = -Infinity;
+          let top2 = -Infinity;
+          evValues.forEach(ev => {
+            if (ev > top1) {
+              top2 = top1;
+              top1 = ev;
+            } else if (ev > top2) {
+              top2 = ev;
+            }
           });
-        } else if (isPlaceholderRfi) {
-          UI.recommendation.innerHTML = `
-            <div class="text-slate-200"><b>Você escolheu:</b> RAISE (OPEN)</div>
-            <div class="text-slate-400 mt-1">Sem EV ainda (gere os JSONs RFI).</div>
-          `;
+
+          const gap = (top1 - top2);
+          const pot = Number(node.pot) || 0;
+          const gapThreshold = Math.max(0.01, 0.001 * pot);
+
+          if (top2 > -Infinity && gap < gapThreshold) {
+            uncertaintyEl.classList.remove('hidden');
+            uncertaintyMetrics.textContent = `Gap EV: ${(gap).toFixed(4)}bb`;
+          } else {
+            uncertaintyEl.classList.add('hidden');
+            uncertaintyMetrics.textContent = '';
+          }
         }
+      }
+
+      // Render Range Frequencies & Hero Frequencies
+      if (barsContainer) {
+        barsContainer.innerHTML = '';
+        node.actions.forEach(act => {
+          const overallFreq = (node.overall_frequencies[act] || 0) * 100;
+          const heroFreq = (heroStrat[act] || 0) * 100;
+          const actEv = heroActionEvs[act];
+          const actName = formatActionName(act);
+
+          const formatEv = (ev) => {
+            if (ev === null || ev === undefined || isNaN(ev)) return "—";
+            const sign = ev >= 0 ? "+" : "";
+            return `${sign}${ev.toFixed(3)}`;
+          };
+          const evDisplay = actEv !== undefined ? `<span class="text-amber-300 ml-2">EV: ${formatEv(actEv)}</span>` : '';
+
+          const barRow = document.createElement('div');
+          barRow.className = 'rounded-lg border border-slate-800 bg-slate-900/60 p-3';
+          barRow.innerHTML = `
+            <div class="flex items-center justify-between text-xs mb-1.5">
+              <span class="font-bold ${getActionTextColor(act)}">${actName}${evDisplay}</span>
+              <div class="flex gap-4 font-mono text-slate-300">
+                <span>Hero: <b class="text-white">${heroFreq.toFixed(1)}%</b></span>
+                <span class="text-slate-500">Range: ${overallFreq.toFixed(1)}%</span>
+              </div>
+            </div>
+            <div class="w-full bg-slate-950 rounded h-2 overflow-hidden">
+              <div class="${getActionBgColor(act)} h-full transition-all duration-300" style="width: ${heroFreq}%"></div>
+            </div>
+          `;
+          barRow.style.cursor = 'pointer';
+          barRow.title = 'Escolher ação no nó';
+          barRow.addEventListener('click', () => resolveNodeAction(act));
+          barsContainer.appendChild(barRow);
+        });
+      }
+    }
+
+    function formatActionName(act) {
+      if (!act) return "—";
+      if (act === "check") return "CHECK";
+      if (act === "fold") return "FOLD";
+      if (act === "call") return "CALL";
+      if (act.startsWith("bet_")) return `BET ${act.replace("bet_", "")}%`;
+      if (act.startsWith("raise_")) return `RAISE ${(parseInt(act.replace("raise_", "").replace("x", ""))/10).toFixed(1)}x`;
+      return act.toUpperCase();
+    }
+
+    function getActionTextColor(act) {
+      if (act === "fold") return "text-rose-400";
+      if (act === "check") return "text-blue-400";
+      if (act === "call") return "text-amber-400";
+      return "text-emerald-400";
+    }
+
+    function getActionBgColor(act) {
+      if (act === "fold") return "bg-rose-500";
+      if (act === "check") return "bg-blue-500";
+      if (act === "call") return "bg-amber-500";
+      return "bg-emerald-500";
+    }
+
+    // =========================================================================
+    // HAND CONTINUOUS (FLOP -> TURN -> RIVER) via node actions
+    // =========================================================================
+    async function resolveNodeAction(selectedAct) {
+      if (!postflopResults || !postflopResults.nodes) return;
+      if (!streetCanAdvance) {
+        setFeedback('Resolva o nó atual primeiro.', 'err');
+        return;
+      }
+      if (handEnded) return;
+
+      const node = postflopResults.nodes[activeNodeId] || postflopResults.nodes["root"];
+      if (!node || !node.actions) return;
+      if (!node.actions.includes(selectedAct)) return;
+
+      const outcomes = node.action_outcomes || {};
+      const outcome = outcomes[selectedAct];
+      if (!outcome) return;
+
+      // Lock until we update the state.
+      streetCanAdvance = false;
+
+      const isContinuous = !!continuedFromPreflop;
+
+      // In non-continuous (training) mode, we only navigate nodes.
+      // In continuous mode, we also apply state transitions and advance streets.
+
+      // Track stack consumption only in hand-continuous mode.
+      if (isContinuous) {
+        // When the hero chooses an action at the current node, the pot in the outcome
+        // includes that action's chips. We approximate stack remaining by subtracting
+        // the pot delta from the acting player.
+        const deltaPot = (outcome.pot != null && node.pot != null)
+          ? Math.max(0, Number(outcome.pot) - Number(node.pot))
+          : 0;
+
+        if (deltaPot > 1e-9) {
+          if (node.player === 'OOP' && currentOopStackRemaining !== null) {
+            currentOopStackRemaining = Math.max(0, currentOopStackRemaining - deltaPot);
+          } else if (node.player === 'IP' && currentIpStackRemaining !== null) {
+            currentIpStackRemaining = Math.max(0, currentIpStackRemaining - deltaPot);
+          }
+        }
+      }
+
+      // Non-terminal: just jump to next node within the same street tree.
+      if (outcome.next_node_id) {
+        activeNodeId = outcome.next_node_id;
+
+        // Sync node tab highlight.
+        document.querySelectorAll('.node-tab').forEach((b) => {
+          const isActive = b.getAttribute('data-node') === activeNodeId;
+          b.className = isActive
+            ? 'node-tab active px-2 py-2 text-xs font-semibold rounded-lg border border-emerald-500 bg-emerald-500/20 text-emerald-300 transition-all text-center'
+            : 'node-tab px-2 py-2 text-xs font-semibold rounded-lg border border-slate-800 bg-slate-950 text-slate-400 hover:text-white transition-all text-center';
+        });
+
+        renderActiveNodeStrategy();
+        renderStrategyMatrix();
+
+        streetCanAdvance = true;
         return;
       }
 
-      // rfi_after_threebet: agora o herói decide fold/call/4bet
-      showRfiAfterThreebetDiagram(actionIdx);
-      return;
+      // Terminal outcomes end either the street (SHOWDOWN) or the hand (FOLD_*).
+      const terminalType = outcome.terminal_type;
+
+      // In non-continuous mode, don't mutate the overall hand state.
+      if (!isContinuous) {
+        // Keep navigation mode consistent: allow user to keep interacting with the tree.
+        streetCanAdvance = true;
+        setFeedback(`Ação terminal selecionada (${terminalType || 'terminal'}).`, 'ok');
+        return;
+      }
+
+      if (terminalType && terminalType.startsWith('FOLD')) {
+        handEnded = true;
+        continuedFromPreflop = false;
+        continuedFromPreflopAction = null;
+        effectiveStackOverride = null;
+        potPreOverride = null;
+        openSizeUsedOverride = null;
+        currentOopStackRemaining = null;
+        currentIpStackRemaining = null;
+        updateHandContinueBanner();
+        setFeedback(`${terminalType.replace('FOLD_', 'Fold ').replace('_', ' ')}. Mão encerrada.`, 'ok');
+        updateButtonsEnabled(false);
+        setPostflopBoardEditingLocked(false);
+        return;
+      }
+
+      if (terminalType === 'SHOWDOWN') {
+        // River is the last street.
+        if (currentBoard.length >= 5) {
+          handEnded = true;
+          continuedFromPreflop = false;
+          continuedFromPreflopAction = null;
+          effectiveStackOverride = null;
+          potPreOverride = null;
+          openSizeUsedOverride = null;
+          currentOopStackRemaining = null;
+          currentIpStackRemaining = null;
+          updateHandContinueBanner();
+          setFeedback('SHOWDOWN na river. Mão encerrada.', 'ok');
+          updateButtonsEnabled(false);
+          setPostflopBoardEditingLocked(false);
+          return;
+        }
+
+        // Advance: snapshot pot/stack for next street solve.
+        const nextPot = outcome.pot != null ? Number(outcome.pot) : (node.pot != null ? Number(node.pot) : 0);
+        potPreOverride = nextPot;
+
+        // Hand-continuous accounting:
+        // The backend solver's `effective_stack` is a *cap on total committed chips*
+        // (not the remaining stack). Therefore we keep it equal to the original
+        // preflop effective stack (lastPreflopSpot.stack) by NOT overriding it here.
+
+        // Propagate exact accumulated investments into the next street solve.
+        if (outcome.oop_invested != null) oopInvestedPre = Number(outcome.oop_invested);
+        if (outcome.ip_invested != null) ipInvestedPre = Number(outcome.ip_invested);
+
+        // Stop using the remaining-stack approximation for effective_stack.
+        effectiveStackOverride = null;
+        currentOopStackRemaining = null;
+        currentIpStackRemaining = null;
+
+        // Deal next street card (TURN or RIVER).
+        const next = dealCards(1, [...currentBoard, ...currentHeroCards]);
+        if (next.length) currentBoard.push(next[0]);
+        renderBoardCards();
+
+        activeNodeId = heroIsOop ? 'root' : 'x';
+        postflopResults = null;
+
+        setFeedback(`Street resolvida. Avançando para ${currentBoard.length === 4 ? 'TURN' : 'RIVER'}...`, 'ok');
+        solvePostflopCurrentSpot();
+        return;
+      }
+
+      // Unknown terminal type: just stop the continuous hand.
+      handEnded = true;
+      continuedFromPreflop = false;
+      continuedFromPreflopAction = null;
+      effectiveStackOverride = null;
+      potPreOverride = null;
+      openSizeUsedOverride = null;
+      currentOopStackRemaining = null;
+      currentIpStackRemaining = null;
+      setPostflopBoardEditingLocked(false);
+      updateHandContinueBanner();
+      setFeedback('Hand finalizada.', 'ok');
+      updateButtonsEnabled(false);
     }
 
-    if (actionIdx === 0) {
-      // para FOLD/CALL não mostramos ramificação de 4BET do vilão
-      if (arrowVill) arrowVill.classList.add('hidden');
-      if (stepVill) stepVill.textContent = '';
+    // =========================================================================
+    // 169-HAND MATRIX HEATMAP
+    // =========================================================================
+    function renderStrategyMatrix() {
+      const container = document.getElementById('postflop-matrix-container');
+      if (!container || !postflopResults) return;
 
-      if (stepOpen) stepOpen.textContent = `OPEN 2.2bb`;
-      if (stepHero) stepHero.textContent = `FOLD (def)`;
-      if (stepVill) stepVill.textContent = '';
-      if (stepTerminal) stepTerminal.textContent = 'Open ganha pote';
-      lineEl.textContent = `FOLD → você cede para o OPEN. (OPEN 2.2bb → FOLD).`;
-    } else if (actionIdx === 1) {
-      // para CALL não mostramos ramificação de 4BET do vilão
-      if (arrowVill) arrowVill.classList.add('hidden');
-      if (stepVill) stepVill.textContent = '';
+      const node = postflopResults.nodes[activeNodeId] || postflopResults.nodes["root"];
+      const classStrats = (node && node.strategy_classes) || {};
 
-      if (stepOpen) stepOpen.textContent = `OPEN 2.2bb`;
-      if (stepHero) stepHero.textContent = `CALL ${facing.toFixed(1)}bb`;
-      if (stepTerminal) stepTerminal.textContent = 'Showdown';
-      lineEl.textContent = `CALL → você paga ${facing.toFixed(1)}bb para ver showdown. (OPEN → CALL).`;
-    } else {
-      if (stepOpen) stepOpen.textContent = `OPEN 2.2bb`;
-      if (stepHero) stepHero.textContent = `3BET ${threeBetLabel}`;
-      if (arrowVill) arrowVill.classList.remove('hidden');
-      if (stepVill) stepVill.textContent = 'Vilão: fold/call ou 4BET';
-      // seta o terminal para deixar explícito que 4BET leva à resposta fold/call
-      if (stepTerminal) stepTerminal.textContent = 'Se 4BET: defensor fold/call';
-      lineEl.textContent = `3BET → você re-raise o OPEN para ${threeBetLabel}. (OPEN → 3BET → vilão fold/call/4BET). Se 4BET, o defensor responde fold/call.`;
+      container.innerHTML = '';
+
+      for (let r1 = 0; r1 < RANKS.length; r1++) {
+        for (let r2 = 0; r2 < RANKS.length; r2++) {
+          let cls = "";
+          if (r1 === r2) {
+            cls = RANKS[r1] + RANKS[r2];
+          } else if (r1 < r2) {
+            cls = RANKS[r1] + RANKS[r2] + "s"; // Suited (upper triangle)
+          } else {
+            cls = RANKS[r2] + RANKS[r1] + "o"; // Offsuit (lower triangle)
+          }
+
+          const cell = document.createElement('div');
+          cell.className = 'matrix-cell bg-slate-900 border border-slate-800/80';
+          cell.title = cls;
+
+          const strat = classStrats[cls] || {};
+
+          // Color code by dominant action
+          let maxAct = "";
+          let maxVal = 0;
+          Object.entries(strat).forEach(([a, val]) => {
+            if (val > maxVal) {
+              maxVal = val;
+              maxAct = a;
+            }
+          });
+
+          if (maxVal > 0.05) {
+            if (maxAct === "fold") cell.style.background = `rgba(239, 68, 68, ${maxVal * 0.8})`;
+            else if (maxAct === "check") cell.style.background = `rgba(59, 130, 246, ${maxVal * 0.8})`;
+            else if (maxAct === "call") cell.style.background = `rgba(245, 158, 11, ${maxVal * 0.8})`;
+            else cell.style.background = `rgba(16, 185, 129, ${maxVal * 0.8})`;
+          }
+
+          cell.innerHTML = `<span>${cls}</span>`;
+          container.appendChild(cell);
+        }
+      }
     }
-  }
 
-  UI.generate.addEventListener('click', gerarProximoSpot);
-  UI.foldBtn.addEventListener('click', () => handleAction(0));
-  UI.callBtn.addEventListener('click', () => handleAction(1));
-  UI.threeBtn.addEventListener('click', () => handleAction(2));
+    // Node selector tabs click
+    document.querySelectorAll('.node-tab').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        document.querySelectorAll('.node-tab').forEach(b => {
+          b.className = 'node-tab px-2 py-2 text-xs font-semibold rounded-lg border border-slate-800 bg-slate-950 text-slate-400 hover:text-white transition-all text-center';
+        });
+        btn.className = 'node-tab active px-2 py-2 text-xs font-semibold rounded-lg border border-emerald-500 bg-emerald-500/20 text-emerald-300 transition-all text-center';
+        activeNodeId = btn.getAttribute('data-node');
+        renderActiveNodeStrategy();
+        renderStrategyMatrix();
+      });
+    });
 
-  // primeira renderização opcional
-  // gerarProximoSpot();
-</script>
+    // Solve button click
+    document.getElementById('btn-solve-postflop')?.addEventListener('click', solvePostflopCurrentSpot);
+
+    // Random board generator
+    document.getElementById('btn-random-flop')?.addEventListener('click', () => {
+      currentBoard = dealCards(3, currentHeroCards);
+      renderBoardCards();
+      solvePostflopCurrentSpot();
+    });
+
+    // Add Turn card
+    document.getElementById('btn-add-turn')?.addEventListener('click', () => {
+      if (currentBoard.length !== 3) return;
+      const next = dealCards(1, [...currentBoard, ...currentHeroCards]);
+      if (next.length) currentBoard.push(next[0]);
+      renderBoardCards();
+      solvePostflopCurrentSpot();
+    });
+
+    // Add River card
+    document.getElementById('btn-add-river')?.addEventListener('click', () => {
+      if (currentBoard.length !== 4) return;
+      const next = dealCards(1, [...currentBoard, ...currentHeroCards]);
+      if (next.length) currentBoard.push(next[0]);
+      renderBoardCards();
+      solvePostflopCurrentSpot();
+    });
+
+    // Preset board textures
+    document.getElementById('preset-board-select')?.addEventListener('change', (e) => {
+      const val = e.target.value;
+      if (!val) return;
+      currentBoard = val.split(',');
+      renderBoardCards();
+      solvePostflopCurrentSpot();
+    });
+
+    // Random Hero Cards
+    document.getElementById('btn-random-hero-cards')?.addEventListener('click', () => {
+      currentHeroCards = dealCards(2, currentBoard);
+      continuedFromPreflop = false;
+      updateHandContinueBanner();
+      renderPostflopHeroCards();
+      solvePostflopCurrentSpot();
+    });
+
+    // =========================================================================
+    // CARD PICKER MODAL
+    // =========================================================================
+    const cardPickerModal = document.getElementById('card-picker-modal');
+    const btnOpenPicker = document.getElementById('btn-open-card-picker');
+    const btnClosePicker = document.getElementById('btn-close-card-picker');
+    const btnConfirmPicker = document.getElementById('btn-confirm-picker');
+    const btnClearBoard = document.getElementById('btn-clear-board');
+    const pickTargetBoard = document.getElementById('pick-target-board');
+    const pickTargetHero = document.getElementById('pick-target-hero');
+    const cardPickerGrid = document.getElementById('card-picker-grid');
+
+    function buildCardPickerGrid() {
+      cardPickerGrid.innerHTML = '';
+      SUITS.forEach(s => {
+        RANKS.split('').forEach(r => {
+          const cardStr = `${r}${s}`;
+          const isDead = (pickerTarget === 'board' ? currentHeroCards.includes(cardStr) : currentBoard.includes(cardStr));
+          const isSelected = (pickerTarget === 'board' ? currentBoard.includes(cardStr) : currentHeroCards.includes(cardStr));
+
+          const cardEl = document.createElement('div');
+          cardEl.className = `card-face card-white card-face-sm cursor-pointer ${isDead ? 'card-dead' : ''} ${isSelected ? 'ring-2 ring-emerald-400 bg-emerald-50' : ''}`;
+          cardEl.innerHTML = `
+            <div class="card-rank ${SUIT_COLORS[s]}">${r}</div>
+            <div class="card-suit ${SUIT_COLORS[s]}">${SUIT_GLYPHS[s]}</div>
+          `;
+
+          cardEl.addEventListener('click', () => {
+            if (isDead) return;
+            if (pickerTarget === 'board') {
+              if (currentBoard.includes(cardStr)) {
+                currentBoard = currentBoard.filter(c => c !== cardStr);
+              } else if (currentBoard.length < 5) {
+                currentBoard.push(cardStr);
+              }
+            } else {
+              if (currentHeroCards.includes(cardStr)) {
+                currentHeroCards = currentHeroCards.filter(c => c !== cardStr);
+              } else if (currentHeroCards.length < 2) {
+                currentHeroCards.push(cardStr);
+              }
+            }
+            buildCardPickerGrid();
+          });
+
+          cardPickerGrid.appendChild(cardEl);
+        });
+      });
+    }
+
+    btnOpenPicker?.addEventListener('click', () => {
+      cardPickerModal.classList.remove('hidden');
+      buildCardPickerGrid();
+    });
+
+    btnClosePicker?.addEventListener('click', () => cardPickerModal.classList.add('hidden'));
+    btnConfirmPicker?.addEventListener('click', () => {
+      cardPickerModal.classList.add('hidden');
+      renderBoardCards();
+      renderPostflopHeroCards();
+      solvePostflopCurrentSpot();
+    });
+
+    btnClearBoard?.addEventListener('click', () => {
+      currentBoard = [];
+      buildCardPickerGrid();
+    });
+
+    pickTargetBoard?.addEventListener('click', () => {
+      pickerTarget = 'board';
+      pickTargetBoard.className = 'px-3 py-1 text-xs rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 font-semibold';
+      pickTargetHero.className = 'px-3 py-1 text-xs rounded bg-slate-800 text-slate-300 font-semibold';
+      buildCardPickerGrid();
+    });
+
+    pickTargetHero?.addEventListener('click', () => {
+      pickerTarget = 'hero';
+      pickTargetHero.className = 'px-3 py-1 text-xs rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 font-semibold';
+      pickTargetBoard.className = 'px-3 py-1 text-xs rounded bg-slate-800 text-slate-300 font-semibold';
+      buildCardPickerGrid();
+    });
+
+    // =========================================================================
+    // MODE 1 (PRÉ-FLOP) LOGIC PRESERVED & INTEGRATED
+    // =========================================================================
+    const UI = {
+      generate: document.getElementById('btn-generate'),
+      feedback: document.getElementById('solver-feedback'),
+      statusCalls: document.getElementById('status-calls'),
+      statusOk: document.getElementById('status-ok'),
+      statusErr: document.getElementById('status-err'),
+      posBadge: document.getElementById('matrix-pos-badge'),
+      potDisplay: document.getElementById('pot-display'),
+      heroCards: document.getElementById('hero-cards'),
+      handDesc: document.getElementById('hand-desc'),
+      foldBtn: document.getElementById('btn-fold'),
+      callBtn: document.getElementById('btn-call'),
+      threeBtn: document.getElementById('btn-raise'),
+      recommendation: document.getElementById('recommendation'),
+      evFold: document.getElementById('ev-fold'),
+      evCall: document.getElementById('ev-call'),
+      evThree: document.getElementById('ev-three'),
+      mixFold: document.getElementById('mix-fold'),
+      mixCall: document.getElementById('mix-call'),
+      mixThree: document.getElementById('mix-three'),
+      barFold: document.getElementById('bar-fold'),
+      barCall: document.getElementById('bar-call'),
+      barThree: document.getElementById('bar-three'),
+    };
+
+    function setFeedback(html, kind) {
+      UI.feedback.innerHTML = html;
+      UI.feedback.className = kind === 'err' ? 'mt-1 text-sm text-rose-300' : (kind === 'ok' ? 'mt-1 text-sm text-emerald-200' : 'mt-1 text-sm text-slate-200');
+    }
+
+    function pickRandomHand() {
+      let r1 = RANKS[Math.floor(Math.random()*RANKS.length)];
+      let s1 = SUITS[Math.floor(Math.random()*SUITS.length)];
+      let r2 = RANKS[Math.floor(Math.random()*RANKS.length)];
+      let s2 = SUITS[Math.floor(Math.random()*SUITS.length)];
+      if (r1 === r2 && s1 === s2) {
+        s2 = SUITS.find(x => x !== s1) || 'h';
+      }
+      return [{r: r1, s: s1}, {r: r2, s: s2}];
+    }
+
+    function renderHeroCards(cards) {
+      UI.heroCards.innerHTML = '';
+      cards.forEach(c => {
+        const cardEl = createCardElement(`${c.r}${c.s}`, false);
+        if (cardEl) UI.heroCards.appendChild(cardEl);
+      });
+    }
+
+    function comboLabel(cards) {
+      const rIdx1 = RANKS.indexOf(cards[0].r);
+      const rIdx2 = RANKS.indexOf(cards[1].r);
+      const high = Math.min(rIdx1, rIdx2);
+      const low = Math.max(rIdx1, rIdx2);
+      if (cards[0].r === cards[1].r) return `${cards[0].r}${cards[1].r}`;
+      const suited = cards[0].s === cards[1].s;
+      return `${RANKS[high]}${RANKS[low]}${suited ? 's' : 'o'}`;
+    }
+
+    function updateButtonsEnabled(enabled) {
+      [UI.foldBtn, UI.callBtn, UI.threeBtn].forEach(b => {
+        b.disabled = !enabled;
+        b.style.opacity = enabled ? '1' : '0.5';
+      });
+    }
+
+    function setPostflopBoardEditingLocked(locked) {
+      const btnRandomFlop = document.getElementById('btn-random-flop');
+      const presetSel = document.getElementById('preset-board-select');
+      const btnOpenPicker = document.getElementById('btn-open-card-picker');
+      const btnConfirmPicker = document.getElementById('btn-confirm-picker');
+      const btnClearBoard = document.getElementById('btn-clear-board');
+
+      if (btnRandomFlop) btnRandomFlop.disabled = !!locked;
+      if (presetSel) presetSel.disabled = !!locked;
+      if (btnOpenPicker) btnOpenPicker.disabled = !!locked;
+      if (btnConfirmPicker) btnConfirmPicker.disabled = !!locked;
+      if (btnClearBoard) btnClearBoard.disabled = !!locked;
+
+      // Fecha modal se travar edição durante mão contínua.
+      if (locked) {
+        const cardPickerModal = document.getElementById('card-picker-modal');
+        if (cardPickerModal) cardPickerModal.classList.add('hidden');
+      }
+    }
+
+    function normalizeHeroPosForSolver(heroPos) {
+      if (defenderPositions.includes(heroPos)) return heroPos;
+      return 'CO';
+    }
+
+    function villainOpenPosForHero(heroPosSolver) {
+      if (heroPosSolver === 'CO') return 'UTG';
+      if (heroPosSolver === 'BTN') return 'CO';
+      return 'BTN';
+    }
+
+    function getFacingBet(heroPosSolver) {
+      const heroPosted = (heroPosSolver === 'BB') ? 1.0 : 0.0;
+      return openSize - heroPosted;
+    }
+
+    function renderSolverBars(data) {
+      const evs = data.evs;
+      const strat = data.strategy;
+      const toFixedEv = (x) => (Number.isFinite(x) ? x.toFixed(4) : '—');
+
+      UI.evFold.textContent = toFixedEv(evs[0]);
+      UI.evCall.textContent = toFixedEv(evs[1]);
+      UI.evThree.textContent = toFixedEv(evs[2]);
+
+      UI.mixFold.textContent = `${(strat[0]*100).toFixed(1)}%`;
+      UI.mixCall.textContent = `${(strat[1]*100).toFixed(1)}%`;
+      UI.mixThree.textContent = `${(strat[2]*100).toFixed(1)}%`;
+
+      UI.barFold.style.width = (strat[0]*100).toFixed(1) + '%';
+      UI.barCall.style.width = (strat[1]*100).toFixed(1) + '%';
+      UI.barThree.style.width = (strat[2]*100).toFixed(1) + '%';
+
+      [UI.foldBtn, UI.callBtn, UI.threeBtn].forEach(b => b.classList.remove('action-best'));
+      const idxEv = evs.reduce((best, x, idx) => (x > evs[best] ? idx : best), 0);
+      [UI.foldBtn, UI.callBtn, UI.threeBtn][idxEv].classList.add('action-best');
+
+      const labels = ['FOLD', 'CALL', '3BET'];
+      UI.recommendation.innerHTML = `
+        <div class="text-slate-200"><b>Ação Ótima GTO:</b> <span class="text-emerald-400 font-bold">${labels[idxEv]}</span></div>
+        <div class="text-slate-400 mt-1 text-xs">EV: ${evs[idxEv].toFixed(4)} • Mix Freq: ${(strat[idxEv]*100).toFixed(1)}%</div>
+      `;
+    }
+
+    async function gerarProximoSpot() {
+      if (isPreflopLocked) return;
+      isPreflopLocked = true;
+      UI.generate.disabled = true;
+
+      handEnded = false;
+      continuedFromPreflop = false;
+      continuedFromPreflopAction = null;
+      lastPreflopSpot = null;
+      updateHandContinueBanner();
+
+      openSize = parseFloat(document.getElementById('filter-open-size')?.value || '2.2');
+      const potPre = 2.0 + openSize;
+
+      const spotTypeSel = document.getElementById('spot-type');
+      let chosenSpotType = spotTypeSel ? spotTypeSel.value : 'defend';
+      if (chosenSpotType === 'auto') chosenSpotType = Math.random() < 0.5 ? 'defend' : 'rfi';
+
+      const filterPos = document.getElementById('filter-hero-pos')?.value || 'ANY';
+      let heroPos = filterPos === 'ANY' ? defenderPositions[Math.floor(Math.random()*defenderPositions.length)] : filterPos;
+      heroPos = normalizeHeroPosForSolver(heroPos);
+      const villPos = villainOpenPosForHero(heroPos);
+      const stack = parseInt(document.getElementById('filter-stack')?.value || '100', 10);
+
+      const cards = pickRandomHand();
+      renderHeroCards(cards);
+
+      UI.posBadge.textContent = `${heroPos} vs ${villPos} open`;
+      UI.potDisplay.textContent = `${potPre.toFixed(1)} BB`;
+      UI.handDesc.textContent = `Você está no ${heroPos} vs OPEN de ${villPos} (${openSize.toFixed(1)}bb). Mão: ${comboLabel(cards)}.`;
+
+      document.getElementById('facing-pill').textContent = `${(openSize - (heroPos === 'BB' ? 1 : 0)).toFixed(1)} BB to call`;
+      document.getElementById('raise-pill').textContent = `3BET ${threeBetLabel}`;
+      document.getElementById('stack-badge').textContent = `${stack}bb`;
+
+      try {
+        const API_URL = (window.location.protocol === 'file:')
+          ? 'http://localhost:8000/api/query_preflop_gto.php'
+          : new URL('/api/query_preflop_gto.php', window.location.origin).toString();
+
+        const resp = await fetch(API_URL, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            heroPos: heroPos,
+            heroCards: [`${cards[0].r}${cards[0].s}`, `${cards[1].r}${cards[1].s}`],
+            villOpenPos: villPos,
+            spotType: chosenSpotType,
+            effectiveStack: stack,
+            rangeProfile: document.getElementById('filter-range-profile')?.value || 'standard',
+            openSize: openSize,
+          })
+        });
+
+        const data = await resp.json();
+        document.getElementById('hero-class-badge').textContent = data.hero_class || '—';
+        renderSolverBars(data);
+
+        lastPreflopSpot = {
+          heroPos,
+          villPos,
+          stack,
+          openSize,
+          spotType: chosenSpotType,
+          cards: [`${cards[0].r}${cards[0].s}`, `${cards[1].r}${cards[1].s}`],
+          heroClass: data.hero_class || comboLabel(cards),
+          callMix: Array.isArray(data.strategy) ? Number(data.strategy[1] || 0) : 0,
+        };
+
+        const callHint = chosenSpotType === 'defend'
+          ? ' CALL leva esta mão ao flop.'
+          : ' CALL no RFI não vai ao flop (você ainda não abriu).';
+        setFeedback('GTO calculado. Escolha uma ação para treinar.' + callHint, 'ok');
+        updateButtonsEnabled(true);
+      } catch (err) {
+        console.error(err);
+        lastPreflopSpot = null;
+        setFeedback('Erro ao consultar solver: ' + err.message, 'err');
+      } finally {
+        isPreflopLocked = false;
+        UI.generate.disabled = false;
+      }
+    }
+
+    function syncPostflopSpotSelect(heroPos, villPos) {
+      const sel = document.getElementById('postflop-spot-select');
+      if (!sel) return;
+      const wanted = `${heroPos}_vs_${villPos}`;
+      const exists = Array.from(sel.options).some((opt) => opt.value === wanted);
+      if (exists) {
+        sel.value = wanted;
+        return;
+      }
+      const opt = document.createElement('option');
+      opt.value = wanted;
+      opt.textContent = `${heroPos} vs ${villPos} open (mão contínua)`;
+      sel.appendChild(opt);
+      sel.value = wanted;
+    }
+
+    function updateHandContinueBanner() {
+      const banner = document.getElementById('hand-continue-banner');
+      const text = document.getElementById('hand-continue-text');
+      if (!banner || !text) return;
+      if (!continuedFromPreflop || !lastPreflopSpot) {
+        banner.classList.add('hidden');
+        return;
+      }
+
+      const s = lastPreflopSpot;
+      const actionLabel = continuedFromPreflopAction || 'CALL';
+
+      // Keep banner meaning simple: preflop action → flop of same hand
+      text.textContent = `${s.heroPos} vs ${s.villPos} open ${Number(s.openSize).toFixed(1)}bb • ${s.heroClass} • stack ${s.stack}bb • ${actionLabel} pré-flop → flop da mesma mão`;
+      banner.classList.remove('hidden');
+    }
+
+    function continueDefendCallToFlop() {
+      if (!lastPreflopSpot || !lastPreflopSpot.cards || lastPreflopSpot.cards.length !== 2) {
+        setFeedback('Gere um spot pré-flop antes de ir ao flop.', 'err');
+        return;
+      }
+      // Em hand-continuous, o CALL também deve continuar para o flop no RFI.
+      // (O contrato externo do RFI é fold/call/threebet após o 3BET do vilão.)
+
+      // Calculate real preflop investments for hand-continuous
+      // BB vs BTN: BTN opened openSize, BB called (openSize - 0.5)
+      const stack = Number(lastPreflopSpot.stack) || 100;
+      const openSize = Number(lastPreflopSpot.openSize) || 2.2;
+      const s = lastPreflopSpot;
+
+      // Determine OOP/IP based on positions
+      const heroIsOop = (s.heroPos === 'BB' || s.heroPos === 'SB' || (s.heroPos === 'CO' && s.villPos === 'BTN'));
+
+      if (heroIsOop) {
+        // Hero is BB, Villain is BTN
+        // BB posted 0.5, BTN opened openSize, BB called (openSize - 0.5)
+        ipInvestedPre = openSize;  // BTN invested openSize
+        oopInvestedPre = openSize - 0.5;  // BB invested openSize - 0.5 (called)
+      } else {
+        // Hero is BTN, Villain is BB
+        // BTN opened openSize, BB called (openSize - 0.5)
+        oopInvestedPre = openSize - 0.5;  // BB invested
+        ipInvestedPre = openSize;  // BTN invested
+      }
+
+      handEnded = false;
+      continuedFromPreflopAction = 'CALL';
+      setPostflopBoardEditingLocked(true);
+      effectiveStackOverride = stack;
+      potPreOverride = 1.5 + 2 * openSize - 0.5;  // 1.5 (SB+BB) + BTN open + BB call
+      openSizeUsedOverride = openSize;
+      currentOopStackRemaining = stack;
+      currentIpStackRemaining = stack;
+
+      currentHeroCards = lastPreflopSpot.cards.slice();
+      currentBoard = dealCards(3, currentHeroCards);
+      postflopResults = null;
+      // Start at the hero decision node.
+      // In the solver tree, 'root' is always the OOP-to-act node; the hero acts at 'x' when hero is IP.
+      activeNodeId = heroIsOop ? 'root' : 'x';
+      continuedFromPreflop = true;
+
+      const stackSel = document.getElementById('postflop-stack-select');
+      if (stackSel) stackSel.value = String(lastPreflopSpot.stack);
+      syncPostflopSpotSelect(lastPreflopSpot.heroPos, lastPreflopSpot.villPos);
+
+      document.querySelectorAll('.node-tab').forEach((b) => {
+        const isRoot = b.getAttribute('data-node') === 'root';
+        b.className = isRoot
+          ? 'node-tab active px-2 py-2 text-xs font-semibold rounded-lg border border-emerald-500 bg-emerald-500/20 text-emerald-300 transition-all text-center'
+          : 'node-tab px-2 py-2 text-xs font-semibold rounded-lg border border-slate-800 bg-slate-950 text-slate-400 hover:text-white transition-all text-center';
+      });
+
+      renderBoardCards();
+      renderPostflopHeroCards();
+      updateHandContinueBanner();
+      switchTab('postflop', { autoSolve: false });
+      setFeedback(`CALL. Flop ${currentBoard.join(' ')} — resolvendo a mesma mão.`, 'ok');
+      // potPreOverride/effectiveStackOverride are applied after FLOP actions.
+      solvePostflopCurrentSpot();
+    }
+
+    function continueThreebetToFlop() {
+      if (!lastPreflopSpot || !lastPreflopSpot.cards || lastPreflopSpot.cards.length !== 2) {
+        setFeedback('Gere um spot pré-flop antes de ir ao flop.', 'err');
+        return;
+      }
+      if (lastPreflopSpot.spotType !== 'defend' && lastPreflopSpot.spotType !== 'rfi') {
+        setFeedback('3BET só é contínuo quando o spot é Defensor ou RFI. Use FOLD/CALL nos spots onde 3BET não continua.', 'err');
+        return;
+      }
+
+      // Calculate real preflop investments for 3BET hand-continuous
+      // BB vs BTN: BTN opened, BB 3bet, BTN called
+      const stack = Number(lastPreflopSpot.stack) || 100;
+      const openSize = Number(lastPreflopSpot.openSize) || 2.2;
+      // Default 3bet size is 3x open (simplified - could use actual 3bet config)
+      const threebetSize = openSize * 3.0;
+      const s = lastPreflopSpot;
+      const heroIsOop = (s.heroPos === 'BB' || s.heroPos === 'SB' || (s.heroPos === 'CO' && s.villPos === 'BTN'));
+
+      // 3BET scenario: BTN opened, BB 3bet, BTN called
+      // Pot = SB 0.5 + BB 1.0 + BTN open + BB 3bet + BTN call (matches BB's total)
+      // Total invested: BB = 0.5 + 1.0 + 3betSize = 1.5 + 3betSize
+      // Total invested: BTN = openSize + (0.5 + 3betSize) = openSize + 0.5 + 3betSize (to call)
+      // Simplified: use effective stacks capped
+
+      if (heroIsOop) {
+        // Hero is BB 3betting
+        const bbTotal = 0.5 + threebetSize;  // BB's total (posted 0.5 + 3bet)
+        const btnCallAmount = threebetSize - 0.5;  // BTN calls the extra over their open
+        ipInvestedPre = openSize + btnCallAmount;  // BTN open + call
+        oopInvestedPre = 0.5 + threebetSize;  // BB posted 0.5 + 3bet
+      } else {
+        // Hero is BTN facing 3bet and calling
+        oopInvestedPre = 0.5 + threebetSize;  // BB posted 0.5 + 3bet
+        ipInvestedPre = openSize + (threebetSize - 0.5);  // BTN open + call
+      }
+
+      // Total pot = SB + BB + BTN open + BB 3bet + BTN call
+      potPreOverride = 1.5 + openSize + threebetSize + (threebetSize - 0.5);
+
+      handEnded = false;
+      continuedFromPreflopAction = '3BET';
+      setPostflopBoardEditingLocked(true);
+      effectiveStackOverride = stack;
+      openSizeUsedOverride = openSize;
+      currentOopStackRemaining = stack;
+      currentIpStackRemaining = stack;
+
+      currentHeroCards = lastPreflopSpot.cards.slice();
+      currentBoard = dealCards(3, currentHeroCards);
+      postflopResults = null;
+      // Start at the hero decision node.
+      // In the solver tree, 'root' is always the OOP-to-act node; the hero acts at 'x' when hero is IP.
+      activeNodeId = heroIsOop ? 'root' : 'x';
+      continuedFromPreflop = true;
+
+      const stackSel = document.getElementById('postflop-stack-select');
+      if (stackSel) stackSel.value = String(lastPreflopSpot.stack);
+      syncPostflopSpotSelect(lastPreflopSpot.heroPos, lastPreflopSpot.villPos);
+
+      document.querySelectorAll('.node-tab').forEach((b) => {
+        const isRoot = b.getAttribute('data-node') === 'root';
+        b.className = isRoot
+          ? 'node-tab active px-2 py-2 text-xs font-semibold rounded-lg border border-emerald-500 bg-emerald-500/20 text-emerald-300 transition-all text-center'
+          : 'node-tab px-2 py-2 text-xs font-semibold rounded-lg border border-slate-800 bg-slate-950 text-slate-400 hover:text-white transition-all text-center';
+      });
+
+      renderBoardCards();
+      renderPostflopHeroCards();
+      updateHandContinueBanner();
+      switchTab('postflop', { autoSolve: false });
+      setFeedback(`3BET. Flop ${currentBoard.join(' ')} — resolvendo a mesma mão.`, 'ok');
+      // potPreOverride/effectiveStackOverride are applied after FLOP actions.
+      solvePostflopCurrentSpot();
+    }
+
+    UI.generate.addEventListener('click', gerarProximoSpot);
+    UI.foldBtn.addEventListener('click', () => {
+      continuedFromPreflop = false;
+      continuedFromPreflopAction = null;
+      effectiveStackOverride = null;
+      potPreOverride = null;
+      openSizeUsedOverride = null;
+      currentOopStackRemaining = null;
+      currentIpStackRemaining = null;
+      handEnded = true;
+
+      updateHandContinueBanner();
+      setFeedback('FOLD. Mão encerrada — gere o próximo spot.', 'ok');
+      updateButtonsEnabled(false);
+      setPostflopBoardEditingLocked(false);
+    });
+    UI.callBtn.addEventListener('click', continueDefendCallToFlop);
+    UI.threeBtn.addEventListener('click', continueThreebetToFlop);
+
+    document.getElementById('btn-back-preflop')?.addEventListener('click', () => {
+      switchTab('preflop', { autoSolve: false });
+    });
+
+    // Initialize initial views
+    renderBoardCards();
+    renderPostflopHeroCards();
+    gerarProximoSpot();
+  </script>
 </body>
 </html>
