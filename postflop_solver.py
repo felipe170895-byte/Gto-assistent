@@ -891,6 +891,108 @@ class PostflopCFRSolver:
         """Collect all decision nodes in the game tree and extract GTO strategies."""
 
         nodes_data: Dict[str, Any] = {}
+        # Reach summaries are computed from the final average strategy so the
+        # sweep can measure the practical frequency of deep betting lines.
+        node_reach_mass: Dict[str, Dict[str, float]] = {}
+        node_action_reach_mass: Dict[str, Dict[str, Dict[str, float]]] = {}
+
+        def average_strategy(
+            node: PostflopGameNode,
+            combo: Tuple[str, str],
+        ) -> Dict[str, float]:
+            s_sum = node.strategy_sum.get(combo, {})
+            total = sum(s_sum.values())
+            if total > 0.0:
+                return {
+                    action: s_sum.get(action, 0.0) / total
+                    for action in node.actions
+                }
+            if not node.actions:
+                return {}
+            uniform = 1.0 / len(node.actions)
+            return {action: uniform for action in node.actions}
+
+        def collect_reach(
+            node: PostflopGameNode,
+            reach_oop: Dict[Tuple[str, str], float],
+            reach_ip: Dict[Tuple[str, str], float],
+        ) -> None:
+            if node.is_terminal:
+                return
+
+            oop_mass = sum(max(0.0, value) for value in reach_oop.values())
+            ip_mass = sum(max(0.0, value) for value in reach_ip.values())
+            hero_reach = 0.0
+            if self._hero_combo is not None:
+                if self.hero_is_oop:
+                    hero_reach = max(
+                        0.0,
+                        reach_oop.get(self._hero_combo, 0.0),
+                    )
+                else:
+                    hero_reach = max(
+                        0.0,
+                        reach_ip.get(self._hero_combo, 0.0),
+                    )
+
+            opponent_mass = ip_mass if self.hero_is_oop else oop_mass
+            node_reach_mass[node.node_id] = {
+                "oop": float(oop_mass),
+                "ip": float(ip_mass),
+                "joint": float(oop_mass * ip_mass),
+                "hero": float(hero_reach),
+                "hero_joint": float(hero_reach * opponent_mass),
+            }
+
+            combos = self.combos_oop if node.player == "OOP" else self.combos_ip
+            current_strategies = {
+                combo: average_strategy(node, combo) for combo in combos
+            }
+            action_reach: Dict[str, Dict[str, float]] = {}
+            hero_player = "OOP" if self.hero_is_oop else "IP"
+            for action in node.actions:
+                action_oop_mass = oop_mass
+                action_ip_mass = ip_mass
+                if node.player == "OOP":
+                    action_oop_mass = sum(
+                        max(0.0, reach_oop.get(combo, 0.0))
+                        * current_strategies[combo].get(action, 0.0)
+                        for combo in combos
+                    )
+                else:
+                    action_ip_mass = sum(
+                        max(0.0, reach_ip.get(combo, 0.0))
+                        * current_strategies[combo].get(action, 0.0)
+                        for combo in combos
+                    )
+
+                action_hero_reach = hero_reach
+                if node.player == hero_player and self._hero_combo is not None:
+                    action_hero_reach = hero_reach * current_strategies.get(
+                        self._hero_combo,
+                        {},
+                    ).get(action, 0.0)
+
+                action_reach[action] = {
+                    "oop": float(action_oop_mass),
+                    "ip": float(action_ip_mass),
+                    "joint": float(action_oop_mass * action_ip_mass),
+                    "hero": float(action_hero_reach),
+                    "hero_joint": float(action_hero_reach * opponent_mass),
+                }
+            node_action_reach_mass[node.node_id] = action_reach
+
+            combos = self.combos_oop if node.player == "OOP" else self.combos_ip
+            for action, child in node.children.items():
+                child_oop = dict(reach_oop)
+                child_ip = dict(reach_ip)
+                for combo in combos:
+                    probability = average_strategy(node, combo).get(action, 0.0)
+                    if node.player == "OOP":
+                        child_oop[combo] = reach_oop.get(combo, 0.0) * probability
+                    else:
+                        child_ip[combo] = reach_ip.get(combo, 0.0) * probability
+                collect_reach(child, child_oop, child_ip)
 
         def traverse_collect(node: PostflopGameNode):
             if node.is_terminal:
@@ -978,6 +1080,9 @@ class PostflopCFRSolver:
                         for a in node.actions
                     }
 
+            reach_mass = node_reach_mass.get(node.node_id, {})
+            action_reach_mass = node_action_reach_mass.get(node.node_id, {})
+
             nodes_data[node.node_id] = {
                 "node_id": node.node_id,
                 "history": node.history,
@@ -986,6 +1091,9 @@ class PostflopCFRSolver:
                 "street": node.street,
                 "oop_invested": node.oop_invested,
                 "ip_invested": node.ip_invested,
+                "reach_mass": reach_mass,
+                "reach_weight": reach_mass.get("joint", 0.0),
+                "action_reach_mass": action_reach_mass,
                 "actions": node.actions,
                 "overall_frequencies": overall_freqs,
                 "strategy_classes": class_strategies,
@@ -997,6 +1105,37 @@ class PostflopCFRSolver:
 
             for child in node.children.values():
                 traverse_collect(child)
+
+        initial_reach_oop = {
+            combo: self.oop_combo_weights[combo]
+            for combo in self.combos_oop
+        }
+        initial_reach_ip = {
+            combo: self.ip_combo_weights[combo]
+            for combo in self.combos_ip
+        }
+        collect_reach(self.root, initial_reach_oop, initial_reach_ip)
+
+        # Normalize node and action opportunity by the root mass. This keeps
+        # reach metrics comparable across boards and range sizes.
+        root_mass = node_reach_mass.get("root", {})
+        root_joint = max(1e-12, float(root_mass.get("joint", 0.0)))
+        root_hero_joint = max(1e-12, float(root_mass.get("hero_joint", 0.0)))
+        for mass in node_reach_mass.values():
+            mass["joint_probability"] = (
+                float(mass.get("joint", 0.0)) / root_joint
+            )
+            mass["hero_joint_probability"] = (
+                float(mass.get("hero_joint", 0.0)) / root_hero_joint
+            )
+        for action_map in node_action_reach_mass.values():
+            for action_mass in action_map.values():
+                action_mass["joint_probability"] = (
+                    float(action_mass.get("joint", 0.0)) / root_joint
+                )
+                action_mass["hero_joint_probability"] = (
+                    float(action_mass.get("hero_joint", 0.0)) / root_hero_joint
+                )
 
         traverse_collect(self.root)
 
