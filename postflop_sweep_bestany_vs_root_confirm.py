@@ -49,6 +49,7 @@ def solve(
     *,
     max_raises_per_street: int,
     iterations: int = 450,
+    bet_config_override: Dict[str, Any] | None = None,
 ) -> Dict[str, Any]:
     hero_cards = ["Ah", "Ad"]
 
@@ -77,6 +78,18 @@ def solve(
         "T9s": 0.6,
     }
 
+    solver_bet_config = bet_config_override or {
+        # Keep grids aggressive to match the main UI.
+        "check_raise_sizes": [1.5, 2.0, 2.5, 3.0, 4.0],
+        "allow_donk": False,
+        "ip_raise_sizes": [1.5, 2.0, 2.5, 3.0, 4.0],
+        "oop_lead_sizes": None,
+        "ip_cbet_sizes": None,
+        "max_raises_per_street": max_raises_per_street,
+    }
+    solver_bet_config = dict(solver_bet_config)
+    solver_bet_config["max_raises_per_street"] = max_raises_per_street
+
     return s.solve_postflop_spot(
         board=board,
         hero_pos="BTN",
@@ -93,15 +106,7 @@ def solve(
         hero_cards=hero_cards,
         custom_oop_range=villain_range,
         custom_ip_range=hero_range,
-        bet_config={
-            # Keep grids aggressive to match the main UI.
-            "check_raise_sizes": [1.5, 2.0, 2.5, 3.0, 4.0],
-            "allow_donk": False,
-            "ip_raise_sizes": [1.5, 2.0, 2.5, 3.0, 4.0],
-            "oop_lead_sizes": None,
-            "ip_cbet_sizes": None,
-            "max_raises_per_street": max_raises_per_street,
-        },
+        bet_config=solver_bet_config,
     )
 
 

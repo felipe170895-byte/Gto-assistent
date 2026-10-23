@@ -603,11 +603,16 @@ def solve_postflop_spot(
     aggressive_check_raise_sizes = [1.5, 2.0, 2.5, 3.0, 4.0]
     aggressive_ip_raise_sizes = [1.5, 2.0, 2.5, 3.0, 4.0]
 
-    def _normalize_and_expand_list(v: Any, default: List[float]) -> List[float]:
-        """Normalize a sizing grid and expand when the caller provides an underspecified set.
+    def _normalize_and_expand_list(
+        v: Any,
+        default: List[float],
+        *,
+        expand_partial: bool = True,
+    ) -> List[float]:
+        """Normalize a sizing grid, optionally expanding underspecified input.
 
-        We treat "partial" bet_config as incomplete (typical when the UI only sends
-        a subset of sizing options), and we expand it to the full aggressive grid.
+        The UI keeps the historical expansion behavior. Convergence probes can
+        opt out so a deliberately reduced tree remains reduced.
         """
 
         if v is None:
@@ -623,7 +628,7 @@ def solve_postflop_spot(
 
         # If caller supplied fewer sizes than the aggressive baseline, consider it
         # incomplete and expand coverage.
-        if len(vals) < len(default):
+        if expand_partial and len(vals) < len(default):
             return sorted(set(vals).union(default))
 
         return sorted(set(vals))
@@ -637,13 +642,28 @@ def solve_postflop_spot(
             return default
         return iv if iv > 0 else default
 
+    expand_partial_sizes = bool(bet_cfg.get("expand_partial_sizes", True))
     cfg = PostflopBetConfig(
-        oop_lead_sizes=_normalize_and_expand_list(bet_cfg.get("oop_lead_sizes"), aggressive_oop_lead_sizes),
-        ip_cbet_sizes=_normalize_and_expand_list(bet_cfg.get("ip_cbet_sizes"), aggressive_ip_cbet_sizes),
-        check_raise_sizes=_normalize_and_expand_list(
-            bet_cfg.get("check_raise_sizes"), aggressive_check_raise_sizes
+        oop_lead_sizes=_normalize_and_expand_list(
+            bet_cfg.get("oop_lead_sizes"),
+            aggressive_oop_lead_sizes,
+            expand_partial=expand_partial_sizes,
         ),
-        ip_raise_sizes=_normalize_and_expand_list(bet_cfg.get("ip_raise_sizes"), aggressive_ip_raise_sizes),
+        ip_cbet_sizes=_normalize_and_expand_list(
+            bet_cfg.get("ip_cbet_sizes"),
+            aggressive_ip_cbet_sizes,
+            expand_partial=expand_partial_sizes,
+        ),
+        check_raise_sizes=_normalize_and_expand_list(
+            bet_cfg.get("check_raise_sizes"),
+            aggressive_check_raise_sizes,
+            expand_partial=expand_partial_sizes,
+        ),
+        ip_raise_sizes=_normalize_and_expand_list(
+            bet_cfg.get("ip_raise_sizes"),
+            aggressive_ip_raise_sizes,
+            expand_partial=expand_partial_sizes,
+        ),
         allow_donk=bool(bet_cfg.get("allow_donk", False)),
         max_raises_per_street=_norm_int(bet_cfg.get("max_raises_per_street"), 2),
     )
