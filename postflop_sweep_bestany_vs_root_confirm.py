@@ -18,6 +18,16 @@ def best_action_by_ev(hero_action_evs: Dict[str, float]) -> Tuple[str, float]:
     return best_act, float(hero_action_evs[best_act])
 
 
+def root_action_for_node_id(node_id: str) -> str:
+    """Return the first post-check action represented by a node id."""
+    parts = (node_id or "").split("_")
+    if len(parts) >= 3 and parts[0] == "x":
+        return f"{parts[1]}_{parts[2]}"
+    if len(parts) >= 2 and parts[0] == "b":
+        return f"{parts[0]}_{parts[1]}"
+    return parts[0] if parts else ""
+
+
 def double_raise_nodes_with_evs(res: Dict[str, Any], *, hero_side: str) -> int:
     nodes = res.get("nodes") or {}
     cnt = 0
@@ -107,6 +117,7 @@ def compute_metrics(res: Dict[str, Any]) -> Dict[str, Any]:
     root_reach_mass = root_node.get("reach_mass") or {}
     root_hero_reach = float(root_reach_mass.get("hero_joint") or 0.0)
     root_hero_combo = str(res.get("hero_combo_key") or "")
+    root_action_reach_mass = root_node.get("action_reach_mass") or {}
 
     # Reach instrumentation is optional so this sweep remains compatible with
     # older cached solver results. Missing metadata must be reported as absent,
@@ -119,6 +130,14 @@ def compute_metrics(res: Dict[str, Any]) -> Dict[str, Any]:
         if isinstance(ev, (int, float))
     }
     root_action_evs = dict(sorted(root_action_evs.items()))
+    root_action_reach_probability = {
+        str(action): float((mass or {}).get("joint_probability") or 0.0)
+        for action, mass in root_action_reach_mass.items()
+    }
+    root_action_hero_reach_probability = {
+        str(action): float((mass or {}).get("hero_joint_probability") or 0.0)
+        for action, mass in root_action_reach_mass.items()
+    }
 
     best_any_ev = float("-inf")
     best_any_node_id = ""
@@ -131,6 +150,10 @@ def compute_metrics(res: Dict[str, Any]) -> Dict[str, Any]:
     double_raise_hero_parent_action_reach_probability = 0.0
     double_raise_parent_action_count = 0
     double_raise_parent_hero_action_count = 0
+    double_raise_parent_reach_by_root_action: Dict[str, float] = {}
+    double_raise_parent_hero_reach_by_root_action: Dict[str, float] = {}
+    double_raise_parent_reach_by_root_action_and_entry: Dict[str, float] = {}
+    double_raise_parent_hero_reach_by_root_action_and_entry: Dict[str, float] = {}
 
     for nid, nd in nodes.items():
         # Reach is a property of the whole line, not only of the player who
@@ -160,13 +183,34 @@ def compute_metrics(res: Dict[str, Any]) -> Dict[str, Any]:
                 entered_by = "raise_" + nid.rsplit("_raise_", 1)[-1]
                 entered_mass = parent_action_map.get(entered_by)
                 if entered_mass is not None:
-                    double_raise_parent_action_count += 1
-                    double_raise_parent_action_reach_probability += float(
+                    entered_joint_probability = float(
                         entered_mass.get("joint_probability") or 0.0
                     )
-                    double_raise_parent_hero_action_count += 1
-                    double_raise_hero_parent_action_reach_probability += float(
+                    entered_hero_probability = float(
                         entered_mass.get("hero_joint_probability") or 0.0
+                    )
+                    double_raise_parent_action_count += 1
+                    double_raise_parent_action_reach_probability += entered_joint_probability
+                    double_raise_parent_hero_action_count += 1
+                    double_raise_hero_parent_action_reach_probability += entered_hero_probability
+
+                    root_action = root_action_for_node_id(nid)
+                    double_raise_parent_reach_by_root_action[root_action] = (
+                        double_raise_parent_reach_by_root_action.get(root_action, 0.0)
+                        + entered_joint_probability
+                    )
+                    double_raise_parent_hero_reach_by_root_action[root_action] = (
+                        double_raise_parent_hero_reach_by_root_action.get(root_action, 0.0)
+                        + entered_hero_probability
+                    )
+                    root_action_entry = f"{root_action}:{entered_by}"
+                    double_raise_parent_reach_by_root_action_and_entry[root_action_entry] = (
+                        double_raise_parent_reach_by_root_action_and_entry.get(root_action_entry, 0.0)
+                        + entered_joint_probability
+                    )
+                    double_raise_parent_hero_reach_by_root_action_and_entry[root_action_entry] = (
+                        double_raise_parent_hero_reach_by_root_action_and_entry.get(root_action_entry, 0.0)
+                        + entered_hero_probability
                     )
 
         # Hero EV / BestAny remain restricted to nodes where the hero acts.
@@ -188,6 +232,8 @@ def compute_metrics(res: Dict[str, Any]) -> Dict[str, Any]:
         "root_best_ev": root_best_ev,
         "root_action_evs": root_action_evs,
         "root_overall_frequencies": root_overall_frequencies,
+        "root_action_reach_probability": root_action_reach_probability,
+        "root_action_hero_reach_probability": root_action_hero_reach_probability,
         "root_hero_reach": root_hero_reach,
         "root_hero_combo": root_hero_combo,
         "best_any_ev": best_any_ev,
@@ -204,6 +250,10 @@ def compute_metrics(res: Dict[str, Any]) -> Dict[str, Any]:
         "double_raise_hero_parent_action_reach_probability": double_raise_hero_parent_action_reach_probability,
         "double_raise_parent_action_count": double_raise_parent_action_count,
         "double_raise_hero_parent_action_count": double_raise_parent_hero_action_count,
+        "double_raise_parent_reach_by_root_action": double_raise_parent_reach_by_root_action,
+        "double_raise_parent_hero_reach_by_root_action": double_raise_parent_hero_reach_by_root_action,
+        "double_raise_parent_reach_by_root_action_and_entry": double_raise_parent_reach_by_root_action_and_entry,
+        "double_raise_parent_hero_reach_by_root_action_and_entry": double_raise_parent_hero_reach_by_root_action_and_entry,
         "double_raise_reach_weight_mean": (
             weighted_double_raise_reach / double_raise_node_count
             if double_raise_node_count
@@ -271,8 +321,14 @@ def main() -> None:
             f"| reachMean={m2['double_raise_reach_weight_mean']:.6f}"
         )
         print(
+            f"  cap=2 doubleRaiseByRootAction={m2['double_raise_parent_reach_by_root_action']} "
+            f"| heroDoubleRaiseByRootAction={m2['double_raise_parent_hero_reach_by_root_action']}"
+        )
+        print(
             f"  cap=1 root={m1['root_best_act']} {m1['root_best_ev']:.6f} "
             f"| rootHeroReach={m1['root_hero_reach']:.6f} "
+            f"| doubleRaiseByRootAction={m1['double_raise_parent_reach_by_root_action']} "
+            f"| heroDoubleRaiseByRootAction={m1['double_raise_parent_hero_reach_by_root_action']} "
             f"| bestAny={m1['best_any_act']} {m1['best_any_ev']:.6f} "
             f"| doubleRaiseNodes={m1['double_raise_node_count_measured']} "
             f"| heroDecisionDoubleRaiseNodes={m1['double_raise_nodes_with_evs']} "
