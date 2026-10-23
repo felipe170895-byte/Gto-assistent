@@ -22,6 +22,7 @@ def test_blocker_aware_mix() -> None:
             compatible_acting_combo: {"check": 0.0, "bet": 1.0},
         },
         ["check", "bet"],
+        {side_combo: [compatible_acting_combo]},
     )
     assert result[side_combo] == 10.0, result
 

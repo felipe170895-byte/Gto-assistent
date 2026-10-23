@@ -484,6 +484,25 @@ class PostflopCFRSolver:
         self.combos_oop = sorted(list(self.oop_combo_weights.keys()))
         self.combos_ip = sorted(list(self.ip_combo_weights.keys()))
 
+        # Blocker compatibility is static for a solve. Precompute it once so
+        # every CFR traversal does not rebuild card sets for every combo pair.
+        self._compatible_ip_by_oop = {
+            oop_combo: [
+                ip_combo
+                for ip_combo in self.combos_ip
+                if not set(oop_combo).intersection(ip_combo)
+            ]
+            for oop_combo in self.combos_oop
+        }
+        self._compatible_oop_by_ip = {
+            ip_combo: [
+                oop_combo
+                for oop_combo in self.combos_oop
+                if not set(ip_combo).intersection(oop_combo)
+            ]
+            for ip_combo in self.combos_ip
+        }
+
         # Build Game Tree (support hand-continuous initial investments)
         self.root = build_postflop_tree(
             self.pot_pre,
@@ -716,16 +735,15 @@ class PostflopCFRSolver:
         acting_reach: Dict[Tuple[str, str], float],
         acting_strats: Dict[Tuple[str, str], Dict[str, float]],
         actions: List[str],
+        compatible_combos_by_side: Dict[Tuple[str, str], List[Tuple[str, str]]],
     ) -> Dict[Tuple[str, str], float]:
         """Mix child utilities using only blocker-compatible acting combos."""
         out: Dict[Tuple[str, str], float] = {}
         for side_combo in side_combos:
-            side_cards = set(side_combo)
             tot = 0.0
             mix = {a: 0.0 for a in actions}
-            for acting_combo in acting_combos:
-                if side_cards.intersection(acting_combo):
-                    continue
+            compatible_acting_combos = compatible_combos_by_side.get(side_combo, [])
+            for acting_combo in compatible_acting_combos:
                 reach = acting_reach.get(acting_combo, 0.0)
                 if reach <= 0.0:
                     continue
@@ -807,10 +825,14 @@ class PostflopCFRSolver:
                 if current_player == "OOP"
                 else reach_ip.get(c, 0.0)
             )
+            compatible_opponent_combos = (
+                self._compatible_ip_by_oop.get(c, [])
+                if current_player == "OOP"
+                else self._compatible_oop_by_ip.get(c, [])
+            )
             compatible_opponent_reach = sum(
                 opponent_reach.get(opponent_combo, 0.0)
-                for opponent_combo in opponent_combos
-                if not set(c).intersection(opponent_combo)
+                for opponent_combo in compatible_opponent_combos
             )
 
             if compatible_opponent_reach > 0.0:
@@ -838,12 +860,24 @@ class PostflopCFRSolver:
         if current_player == "OOP":
             ev_oop = node_ev
             ev_ip = self._mix_side_ev(
-                action_ev_ip, self.combos_ip, combos, reach_oop, current_strats, node.actions
+                action_ev_ip,
+                self.combos_ip,
+                combos,
+                reach_oop,
+                current_strats,
+                node.actions,
+                self._compatible_oop_by_ip,
             )
         else:
             ev_ip = node_ev
             ev_oop = self._mix_side_ev(
-                action_ev_oop, self.combos_oop, combos, reach_ip, current_strats, node.actions
+                action_ev_oop,
+                self.combos_oop,
+                combos,
+                reach_ip,
+                current_strats,
+                node.actions,
+                self._compatible_ip_by_oop,
             )
 
         return {"OOP": ev_oop, "IP": ev_ip}
