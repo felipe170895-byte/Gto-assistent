@@ -717,28 +717,35 @@ class PostflopCFRSolver:
         acting_strats: Dict[Tuple[str, str], Dict[str, float]],
         actions: List[str],
     ) -> Dict[Tuple[str, str], float]:
-        """Opponent (or same-side parent) EV: mix child utilities by the acting player's reach-weighted strategy."""
-        tot = 0.0
-        mix = {a: 0.0 for a in actions}
-        for c in acting_combos:
-            r = acting_reach.get(c, 0.0)
-            if r <= 0.0:
-                continue
-            tot += r
-            st = acting_strats[c]
-            for a in actions:
-                mix[a] += st[a] * r
-        if tot > 1e-15:
-            for a in actions:
-                mix[a] /= tot
-        elif actions:
-            u = 1.0 / len(actions)
-            for a in actions:
-                mix[a] = u
-
+        """Mix child utilities using only blocker-compatible acting combos."""
         out: Dict[Tuple[str, str], float] = {}
-        for c in side_combos:
-            out[c] = sum(mix[a] * action_evs[a].get(c, 0.0) for a in actions)
+        for side_combo in side_combos:
+            side_cards = set(side_combo)
+            tot = 0.0
+            mix = {a: 0.0 for a in actions}
+            for acting_combo in acting_combos:
+                if side_cards.intersection(acting_combo):
+                    continue
+                reach = acting_reach.get(acting_combo, 0.0)
+                if reach <= 0.0:
+                    continue
+                tot += reach
+                strategy = acting_strats[acting_combo]
+                for action in actions:
+                    mix[action] += strategy.get(action, 0.0) * reach
+
+            if tot > 1e-15:
+                for action in actions:
+                    mix[action] /= tot
+            elif actions:
+                uniform = 1.0 / len(actions)
+                for action in actions:
+                    mix[action] = uniform
+
+            out[side_combo] = sum(
+                mix[action] * action_evs[action].get(side_combo, 0.0)
+                for action in actions
+            )
         return out
 
     def _cfr_traverse(
@@ -784,40 +791,49 @@ class PostflopCFRSolver:
         node_ev: Dict[Tuple[str, str], float] = {}
 
         # CFR+ with counterfactual reach:
-        # - For regrets: weight by TOTAL opponent reach (not same combo)
-        # - For strategy_sum: weight by current player's reach
-        # The counterfactual is: "how often does opponent give me THIS decision opportunity"
-        # Since we're iterating over MY combos, we use opponent's TOTAL reach probability
+        # - Regrets use compatible opponent reach only.
+        # - Strategy averaging uses the acting player's realization reach.
+        # - Action EV diagnostics are averaged per infoset, not by own reach.
         opponent_reach = reach_ip if current_player == "OOP" else reach_oop
-        total_opponent_reach = sum(opponent_reach.values()) if opponent_reach else 0.0
+        opponent_combos = self.combos_ip if current_player == "OOP" else self.combos_oop
 
         for c in combos:
             strat = current_strats[c]
             ev = sum(strat[a] * action_utilities[a].get(c, 0.0) for a in node.actions)
             node_ev[c] = ev
 
-            # My reach probability (used for strategy_sum and EV accumulation)
-            my_reach = reach_oop.get(c, 0.0) if current_player == "OOP" else reach_ip.get(c, 0.0)
+            my_reach = (
+                reach_oop.get(c, 0.0)
+                if current_player == "OOP"
+                else reach_ip.get(c, 0.0)
+            )
+            compatible_opponent_reach = sum(
+                opponent_reach.get(opponent_combo, 0.0)
+                for opponent_combo in opponent_combos
+                if not set(c).intersection(opponent_combo)
+            )
 
-            # Counterfactual reach: use TOTAL opponent reach, not same-combo reach
-            # This is critical - opponent having a *different* combo still gives us
-            # the decision opportunity. Using same-combo would give cf_prob ≈ 0
-            cf_prob = total_opponent_reach
-
-            if my_reach > 0.0 and cf_prob > 0.0:
+            if compatible_opponent_reach > 0.0:
                 for a in node.actions:
-                    # Regret: difference between action's EV and current strategy EV
-                    # Weighted by counterfactual reach (how often opponent lets us decide)
+                    # Regret matching uses counterfactual opportunity reach, not
+                    # the acting combo's own realization reach. A zero own reach
+                    # must not freeze this combo's future regrets.
                     regret_delta = action_utilities[a].get(c, 0.0) - ev
-                    node.regrets[c][a] = max(0.0, node.regrets[c][a] + regret_delta * cf_prob)
+                    node.regrets[c][a] = max(
+                        0.0,
+                        node.regrets[c][a]
+                        + regret_delta * compatible_opponent_reach,
+                    )
 
-                    # Strategy sum: weighted by current player's reach
-                    node.strategy_sum[c][a] += strat[a] * weight * my_reach
+                    # The average strategy is realization-weighted by the acting
+                    # player's reach at this information set.
+                    if my_reach > 0.0:
+                        node.strategy_sum[c][a] += strat[a] * weight * my_reach
 
-                    # EV-by-action accumulation (for hero_action_evs)
-                    act_ev = action_utilities[a].get(c, 0.0)
-                    node.action_utility_sum[c][a] += act_ev * weight * my_reach
-                node.action_utility_weight[c] += weight * my_reach
+                    # Action EV is conditional on this information set. Weight it
+                    # by iteration only, avoiding bias from the combo's own path.
+                    node.action_utility_sum[c][a] += action_utilities[a].get(c, 0.0) * weight
+                node.action_utility_weight[c] += weight
 
         if current_player == "OOP":
             ev_oop = node_ev

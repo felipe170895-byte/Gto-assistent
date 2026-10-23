@@ -705,7 +705,8 @@ def solve_postflop_spot(
     )
 
     # Adaptive schedule: grow to a higher target when 2nd raises are enabled.
-    # We stop early when EV-by-action for the hero converges.
+    # Do not stop from a hero-only snapshot: it can hide unresolved villain or
+    # deep-subtree regrets that still affect later iterations.
     aggressive_profile = bool(getattr(cfg, "max_raises_per_street", 1) >= 2)
     target_max_iters = 450 if aggressive_profile else 300
 
@@ -716,120 +717,14 @@ def solve_postflop_spot(
     elif iterations < target_max_iters:
         schedule_increments.append(target_max_iters - int(iterations))
 
-    def hero_decision_snapshot(res: Dict[str, Any]) -> Dict[str, float]:
-        out: Dict[str, float] = {}
-        hero_side = "OOP" if is_hero_oop else "IP"
-        nodes = res.get("nodes") or {}
-
-        for nid, nd in nodes.items():
-            if nd.get("player") != hero_side:
-                continue
-
-            # EV snapshot (para bater o critério de “melhor decisão”)
-            ev_map = nd.get("hero_action_evs") or {}
-            for act, ev in ev_map.items():
-                out[f"ev:{nid}:{act}"] = float(ev)
-
-            # Mix snapshot (para evitar parar quando EV muda pouco, mas a strategy oscila)
-            freq_map = nd.get("overall_frequencies") or {}
-            for act, p in freq_map.items():
-                out[f"mix:{nid}:{act}"] = float(p)
-
-        return out
-
-    converged = False
-    prev_snapshot: Optional[Dict[str, float]] = None
+    # Run every scheduled batch. A hero-only snapshot can look stable while
+    # villain nodes or deep second-raise subtrees still carry residual regret.
+    # The requested budget is therefore the convergence budget; no early stop
+    # is taken from partial strategy/EV snapshots.
     final_results: Optional[Dict[str, Any]] = None
-
-    # Heuristic convergence threshold: relative to pot size.
-    # When allowing 2nd raises we tighten slightly to avoid early stopping
-    # in deeper lines that can materially affect the policy.
-    ev_threshold = max(1e-6, 0.010 * float(pot_pre))
-    if aggressive_profile:
-        ev_threshold = max(1e-6, ev_threshold * 0.5)
-
-    # Run first batch + optional extra batches.
-    for inc_idx, inc in enumerate(schedule_increments):
-        if inc <= 0:
-            continue
-
-        final_results = solver.solve(iterations=inc)
-        curr_snapshot = hero_decision_snapshot(final_results)
-
-        if prev_snapshot is not None:
-            keys = set(prev_snapshot.keys()) | set(curr_snapshot.keys())
-
-            def is_double_raise_node_id(nid: str) -> bool:
-                # Heurística idêntica à badge do UI: "raise_" ocorre >= 2 vezes.
-                return (nid or '').count('raise_') >= 2
-
-            # Convergência composta: EV estável e mix estável.
-            ev_keys = [k for k in keys if k.startswith('ev:')]
-            max_ev_delta = 0.0
-            for k in ev_keys:
-                d = abs(curr_snapshot.get(k, 0.0) - prev_snapshot.get(k, 0.0))
-                if d > max_ev_delta:
-                    max_ev_delta = d
-
-            mix_keys = [k for k in keys if k.startswith('mix:')]
-            max_mix_delta = 0.0
-            for k in mix_keys:
-                d = abs(curr_snapshot.get(k, 0.0) - prev_snapshot.get(k, 0.0))
-                if d > max_mix_delta:
-                    max_mix_delta = d
-
-            # Se EV estiver OK E o mix não oscilar muito, paramos.
-            # Threshold de mix: pequeno (probabilidade).
-            mix_threshold = 0.03
-
-            ok_all = (max_ev_delta <= ev_threshold and max_mix_delta <= mix_threshold)
-
-            # Quando 2ª raise está habilitada, exigir convergência também no subconjunto
-            # de nós "double-raise" para reduzir ruído de early-stopping em linhas profundas.
-            ok_double = True
-            if aggressive_profile:
-                # Parse nid from keys: ev:{nid}:{act} / mix:{nid}:{act}
-                ev_double_keys = []
-                mix_double_keys = []
-
-                for k in ev_keys:
-                    parts = k.split(':', 2)
-                    if len(parts) >= 3 and is_double_raise_node_id(parts[1]):
-                        ev_double_keys.append(k)
-
-                for k in mix_keys:
-                    parts = k.split(':', 2)
-                    if len(parts) >= 3 and is_double_raise_node_id(parts[1]):
-                        mix_double_keys.append(k)
-
-                require_double = bool(ev_double_keys or mix_double_keys)
-                if require_double:
-                    max_ev_delta_double = 0.0
-                    for k in ev_double_keys:
-                        d = abs(curr_snapshot.get(k, 0.0) - prev_snapshot.get(k, 0.0))
-                        if d > max_ev_delta_double:
-                            max_ev_delta_double = d
-
-                    max_mix_delta_double = 0.0
-                    for k in mix_double_keys:
-                        d = abs(curr_snapshot.get(k, 0.0) - prev_snapshot.get(k, 0.0))
-                        if d > max_mix_delta_double:
-                            max_mix_delta_double = d
-
-                    # Mais apertado para nós com "2ª raise".
-                    ev_threshold_double = max(1e-6, ev_threshold * 0.5)
-                    mix_threshold_double = mix_threshold * 0.5
-
-                    ok_double = (
-                        max_ev_delta_double <= ev_threshold_double
-                        and max_mix_delta_double <= mix_threshold_double
-                    )
-
-            if ok_all and ok_double:
-                converged = True
-                break
-
-        prev_snapshot = curr_snapshot
+    for inc in schedule_increments:
+        if inc > 0:
+            final_results = solver.solve(iterations=inc)
 
     results = final_results if final_results is not None else solver.solve(iterations=iterations)
 
