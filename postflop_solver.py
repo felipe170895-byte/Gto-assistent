@@ -887,6 +887,14 @@ class PostflopCFRSolver:
         self._sanity_side_evs(node, ev_oop, ev_ip)
         return {"OOP": ev_oop, "IP": ev_ip}
 
+    def _iter_decision_nodes(self, node: PostflopGameNode):
+        """Yield every non-terminal node in the betting tree."""
+        if node.is_terminal:
+            return
+        yield node
+        for child in node.children.values():
+            yield from self._iter_decision_nodes(child)
+
     def _extract_all_node_results(self) -> Dict[str, Any]:
         """Collect all decision nodes in the game tree and extract GTO strategies."""
 
@@ -1139,6 +1147,63 @@ class PostflopCFRSolver:
 
         traverse_collect(self.root)
 
+        # Residual CFR+ regret diagnostics. Cumulative positive regret is
+        # normalized by completed iterations so the convergence probes can
+        # distinguish a stable-looking mix from an unfinished subgame.
+        node_regret_diagnostics: Dict[str, Dict[str, float]] = {}
+        global_max_normalized = 0.0
+        global_weighted_sum = 0.0
+        global_weighted_mass = 0.0
+        for decision_node in self._iter_decision_nodes(self.root):
+            combo_regret_values: List[float] = []
+            weighted_sum = 0.0
+            weighted_mass = 0.0
+            for combo in (
+                self.combos_oop
+                if decision_node.player == "OOP"
+                else self.combos_ip
+            ):
+                regrets = decision_node.regrets.get(combo, {})
+                max_regret = max(
+                    (max(0.0, float(value)) for value in regrets.values()),
+                    default=0.0,
+                )
+                normalized = max_regret / max(1, self._cfr_iters_done)
+                combo_regret_values.append(normalized)
+                combo_weight = float(
+                    (self.oop_combo_weights if decision_node.player == "OOP" else self.ip_combo_weights)
+                    .get(combo, 0.0)
+                )
+                weighted_sum += normalized * combo_weight
+                weighted_mass += combo_weight
+
+            node_max = max(combo_regret_values, default=0.0)
+            node_mean = (
+                sum(combo_regret_values) / len(combo_regret_values)
+                if combo_regret_values
+                else 0.0
+            )
+            node_weighted_mean = weighted_sum / weighted_mass if weighted_mass > 0.0 else 0.0
+            node_regret_diagnostics[decision_node.node_id] = {
+                "max_normalized_regret": float(node_max),
+                "mean_normalized_regret": float(node_mean),
+                "weighted_mean_normalized_regret": float(node_weighted_mean),
+            }
+            global_max_normalized = max(global_max_normalized, node_max)
+            global_weighted_sum += weighted_sum
+            global_weighted_mass += weighted_mass
+
+        regret_diagnostics = {
+            "iterations_completed": float(self._cfr_iters_done),
+            "max_normalized_regret": float(global_max_normalized),
+            "weighted_mean_normalized_regret": float(
+                global_weighted_sum / global_weighted_mass
+                if global_weighted_mass > 0.0
+                else 0.0
+            ),
+            "by_node": node_regret_diagnostics,
+        }
+
         # Categorize hands for OOP and IP
         oop_categories = {}
         for c in self.combos_oop:
@@ -1176,4 +1241,5 @@ class PostflopCFRSolver:
             "hero_draw": hero_draw,
             "num_oop_combos": len(self.combos_oop),
             "num_ip_combos": len(self.combos_ip),
+            "regret_diagnostics": regret_diagnostics,
         }

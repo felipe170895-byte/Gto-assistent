@@ -44,7 +44,12 @@ def double_raise_nodes_with_evs(res: Dict[str, Any], *, hero_side: str) -> int:
     return cnt
 
 
-def solve(board: List[str], *, max_raises_per_street: int) -> Dict[str, Any]:
+def solve(
+    board: List[str],
+    *,
+    max_raises_per_street: int,
+    iterations: int = 450,
+) -> Dict[str, Any]:
     hero_cards = ["Ah", "Ad"]
 
     # Use an IP-hero scenario so the measured starting node ("x") has several
@@ -82,7 +87,7 @@ def solve(board: List[str], *, max_raises_per_street: int) -> Dict[str, Any]:
         rake_cap=0.0,
         # Equal budget for both A/B arms; the service's adaptive schedule only
         # adds work when the requested budget is below its target.
-        iterations=450,
+        iterations=iterations,
         equity_iters=4,
         preflop_action="CALL",
         hero_cards=hero_cards,
@@ -225,6 +230,8 @@ def compute_metrics(res: Dict[str, Any]) -> Dict[str, Any]:
             best_any_node_id = nid
             best_any_act = act
 
+    regret_diagnostics = res.get("regret_diagnostics") or {}
+
     return {
         "hero_side": hero_side,
         "root_node_id": root_node_id,
@@ -261,7 +268,60 @@ def compute_metrics(res: Dict[str, Any]) -> Dict[str, Any]:
         ),
         "has_reach_metrics": has_reach_metrics,
         "has_action_reach_metrics": has_action_reach_metrics,
+        "regret_diagnostics": regret_diagnostics,
     }
+
+
+def run_convergence_probe(
+    board: List[str],
+    *,
+    budgets: List[int],
+) -> None:
+    print(f"\n=== Convergence probe board={board} ===")
+    previous: Optional[Dict[str, Any]] = None
+    for budget in budgets:
+        result = compute_metrics(solve(board, max_raises_per_street=2, iterations=budget))
+        if previous is None:
+            print(
+                f"iterations={budget} root={result['root_best_act']} "
+                f"rootEV={result['root_best_ev']:.6f} "
+                f"rootEVs={result['root_action_evs']} "
+                f"reachByAction={result['double_raise_parent_reach_by_root_action']}"
+            )
+        else:
+            actions = set(previous["root_action_evs"]) | set(result["root_action_evs"])
+            max_ev_delta = max(
+                (
+                    abs(
+                        result["root_action_evs"].get(action, 0.0)
+                        - previous["root_action_evs"].get(action, 0.0)
+                    )
+                    for action in actions
+                ),
+                default=0.0,
+            )
+            freq_actions = set(previous["root_overall_frequencies"]) | set(
+                result["root_overall_frequencies"]
+            )
+            max_frequency_delta = max(
+                (
+                    abs(
+                        result["root_overall_frequencies"].get(action, 0.0)
+                        - previous["root_overall_frequencies"].get(action, 0.0)
+                    )
+                    for action in freq_actions
+                ),
+                default=0.0,
+            )
+            print(
+                f"iterations={budget} root={result['root_best_act']} "
+                f"rootEV={result['root_best_ev']:.6f} "
+                f"deltaEV={abs(result['root_best_ev'] - previous['root_best_ev']):.6f} "
+                f"maxActionEVDelta={max_ev_delta:.6f} "
+                f"maxFrequencyDelta={max_frequency_delta:.6f} "
+                f"reachByAction={result['double_raise_parent_reach_by_root_action']}"
+            )
+        previous = result
 
 
 def main() -> None:
@@ -293,12 +353,16 @@ def main() -> None:
     hero_private = {"Ah", "Ad"}
     boards = [b for b in boards if not any(c in hero_private for c in b)]
 
+    if os.environ.get("RUN_CONVERGENCE_PROBE") == "1":
+        run_convergence_probe(boards[4], budgets=[450, 900, 1350])
+        return
+
     metrics_A: List[Dict[str, Any]] = []
     metrics_B: List[Dict[str, Any]] = []
 
     for i, board in enumerate(boards, start=1):
-        res2 = solve(board, max_raises_per_street=2)
-        res1 = solve(board, max_raises_per_street=1)
+        res2 = solve(board, max_raises_per_street=2, iterations=450)
+        res1 = solve(board, max_raises_per_street=1, iterations=450)
 
         m2 = compute_metrics(res2)
         m1 = compute_metrics(res1)
