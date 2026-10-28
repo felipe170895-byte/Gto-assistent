@@ -93,6 +93,16 @@ class PostflopGameNode:
         # strategy_sum[combo][action] -> float (for average GTO strategy)
         self.strategy_sum: Dict[Tuple[str, str], Dict[str, float]] = {}
 
+        # Optional: which public board variant this node belongs to.
+        # - For single-street solves: generally left as None (defaults to solver.board)
+        # - For flop->turn solves: turn subtree nodes get a concrete board_key
+        #   so showdown EV can select the right equity matrix.
+        self.board_key: Optional[Tuple[str, ...]] = None
+
+        # Optional: chance probabilities for CHANCE nodes.
+        # Keys match node.actions; values should sum to ~1.
+        self.chance_probs: Optional[Dict[str, float]] = None
+
         # Per-combo EV-by-action (acting player's EV)
         self.action_utility_sum: Dict[Tuple[str, str], Dict[str, float]] = {}
         self.action_utility_weight: Dict[Tuple[str, str], float] = {}
@@ -446,6 +456,222 @@ def build_postflop_tree(
     return root
 
 
+def build_flop_to_turn_tree(
+    *,
+    flop_board: List[str],
+    pot_pre: float,
+    effective_stack: float,
+    bet_config: PostflopBetConfig,
+    oop_invested_pre: Optional[float] = None,
+    ip_invested_pre: Optional[float] = None,
+    turn_samples: int = 8,
+    seed: int = 42,
+    known_dead_cards: Optional[List[str]] = None,
+    forced_turn_card: Optional[str] = None,
+    river_samples: Optional[int] = 1,
+    forced_river_card: Optional[str] = None,
+) -> PostflopGameNode:
+    """Build a 3-street (FLOP -> TURN -> RIVER) subgame.
+
+    This is an MVP for the "flop->turn CFR+" mode:
+    - FLOP betting is solved normally.
+    - Every FLOP SHOWDOWN terminal is replaced by a CHANCE node that deals
+      sampled TURN cards.
+    - For each dealt TURN card, we solve a TURN betting subgame.
+    - Every TURN SHOWDOWN terminal is replaced by a CHANCE node that deals
+      sampled/conditioned RIVER (runout) cards, then we solve a RIVER betting
+      subgame ending in RIVER SHOWDOWN.
+
+    The CHANCE node outcomes are public turn cards; blocker interactions are
+    handled downstream by EV/strategy computations that are conditioned on
+    each combo and board variant.
+    """
+
+    if len(flop_board) != 3:
+        raise ValueError(f"flop_board must have exactly 3 cards, got {len(flop_board)}")
+
+    flop_board = [c.strip() for c in flop_board]
+    dead_board = set(flop_board)
+    known_dead = set(known_dead_cards or [])
+
+    # Candidate turn cards: uniform over all remaining deck cards.
+    # In flop->turn mode we exclude known_dead_cards (e.g. hero hole cards)
+    # so we don't include impossible branches.
+    turn_candidates = [
+        c for c in pe.ALL_CARDS if c not in dead_board and c not in known_dead
+    ]
+    if not turn_candidates:
+        raise ValueError("No turn candidates available")
+
+    rng = random.Random(seed)
+
+    if forced_turn_card is not None:
+        forced_turn_card = str(forced_turn_card).strip()
+        if forced_turn_card not in turn_candidates:
+            raise ValueError(
+                f"forced_turn_card={forced_turn_card!r} is not a valid turn outcome for the given flop/known_dead_cards"
+            )
+        sampled_turns = [forced_turn_card]
+    elif turn_samples is None or turn_samples <= 0 or turn_samples >= len(turn_candidates):
+        sampled_turns = list(turn_candidates)
+    else:
+        sampled_turns = rng.sample(turn_candidates, int(turn_samples))
+
+    # Candidate river cards for each sampled turn variant.
+    # This turns the previous 2-street MVP into a full 3-street
+    # (FLOP -> TURN -> RIVER) hand-continuous subgame.
+    sampled_rivers_by_turn: Dict[str, List[str]] = {}
+
+    if forced_river_card is not None:
+        forced_river_card = str(forced_river_card).strip()
+
+    for turn_card in sampled_turns:
+        dead_for_river = dead_board.union({turn_card}).union(known_dead)
+        river_candidates = [c for c in pe.ALL_CARDS if c not in dead_for_river]
+        if not river_candidates:
+            raise ValueError(
+                f"No river candidates available for turn_card={turn_card!r}"
+            )
+
+        if forced_river_card is not None:
+            if forced_river_card not in river_candidates:
+                raise ValueError(
+                    f"forced_river_card={forced_river_card!r} is not a valid river outcome "
+                    f"for flop={flop_board} turn={turn_card!r}"
+                )
+            sampled_rivers = [forced_river_card]
+        elif (
+            river_samples is None
+            or river_samples <= 0
+            or river_samples >= len(river_candidates)
+        ):
+            sampled_rivers = list(river_candidates)
+        else:
+            sampled_rivers = rng.sample(river_candidates, int(river_samples))
+
+        sampled_rivers_by_turn[turn_card] = sampled_rivers
+
+    flop_root = build_postflop_tree(
+        pot_pre=pot_pre,
+        effective_stack=effective_stack,
+        bet_config=bet_config,
+        street="FLOP",
+        oop_invested_pre=oop_invested_pre,
+        ip_invested_pre=ip_invested_pre,
+    )
+
+    def _prefix_node_ids(node: PostflopGameNode, prefix: str) -> None:
+        node.node_id = f"{prefix}_{node.node_id}"
+        node.history = f"{prefix}_{node.history}"
+        for child in node.children.values():
+            _prefix_node_ids(child, prefix)
+
+    def _stamp_board_key(node: PostflopGameNode, board_key: Tuple[str, ...]) -> None:
+        node.board_key = board_key
+        for child in node.children.values():
+            _stamp_board_key(child, board_key)
+
+    def _replace_turn_showdowns_with_river(
+        turn_root: PostflopGameNode,
+        turn_card: str,
+    ) -> None:
+        sampled_rivers = sampled_rivers_by_turn.get(turn_card, [])
+        if not sampled_rivers:
+            raise ValueError(f"No sampled_rivers for turn_card={turn_card!r}")
+
+        for act, child in list(turn_root.children.items()):
+            if child.is_terminal and child.terminal_type == "SHOWDOWN":
+                showdown = child
+
+                chance_id = f"chance_river_{showdown.node_id}"
+                chance_node = PostflopGameNode(
+                    node_id=chance_id,
+                    player="CHANCE",
+                    pot=showdown.pot,
+                    street="RIVER",
+                    history=showdown.history,
+                    oop_invested=showdown.oop_invested,
+                    ip_invested=showdown.ip_invested,
+                )
+
+                chance_node.actions = list(sampled_rivers)
+                if sampled_rivers:
+                    p_each = 1.0 / float(len(sampled_rivers))
+                    chance_node.chance_probs = {r: p_each for r in sampled_rivers}
+
+                for river_card in sampled_rivers:
+                    river_board_key = tuple(flop_board + [turn_card, river_card])
+
+                    river_root = build_postflop_tree(
+                        pot_pre=showdown.pot,
+                        effective_stack=effective_stack,
+                        bet_config=bet_config,
+                        street="RIVER",
+                        oop_invested_pre=showdown.oop_invested,
+                        ip_invested_pre=showdown.ip_invested,
+                    )
+
+                    _prefix_node_ids(river_root, f"{chance_id}_{turn_card}_{river_card}")
+                    _stamp_board_key(river_root, river_board_key)
+                    chance_node.children[river_card] = river_root
+
+                turn_root.children[act] = chance_node
+                continue
+
+            _replace_turn_showdowns_with_river(child, turn_card)
+
+    def _replace_showdowns(node: PostflopGameNode) -> None:
+        for act, child in list(node.children.items()):
+            if child.is_terminal and child.terminal_type == "SHOWDOWN":
+                showdown = child
+
+                chance_id = f"chance_turn_{showdown.node_id}"
+                chance_node = PostflopGameNode(
+                    node_id=chance_id,
+                    player="CHANCE",
+                    pot=showdown.pot,
+                    street="TURN",
+                    history=showdown.history,
+                    oop_invested=showdown.oop_invested,
+                    ip_invested=showdown.ip_invested,
+                )
+
+                chance_node.actions = list(sampled_turns)
+                if sampled_turns:
+                    p_each = 1.0 / float(len(sampled_turns))
+                    chance_node.chance_probs = {t: p_each for t in sampled_turns}
+
+                for turn_card in sampled_turns:
+                    turn_board_key = tuple(flop_board + [turn_card])
+
+                    turn_root = build_postflop_tree(
+                        pot_pre=showdown.pot,
+                        effective_stack=effective_stack,
+                        bet_config=bet_config,
+                        street="TURN",
+                        oop_invested_pre=showdown.oop_invested,
+                        ip_invested_pre=showdown.ip_invested,
+                    )
+
+                    _prefix_node_ids(turn_root, f"{chance_id}_{turn_card}")
+                    _stamp_board_key(turn_root, turn_board_key)
+
+                    # Turn betting subtree ends in TURN SHOWDOWN terminals.
+                    # Replace them with a CHANCE RIVER node for each river outcome
+                    # sampled/conditioned under this specific turn_card.
+                    _replace_turn_showdowns_with_river(turn_root, turn_card)
+
+                    chance_node.children[turn_card] = turn_root
+
+                node.children[act] = chance_node
+                continue
+
+            _replace_showdowns(child)
+
+    _replace_showdowns(flop_root)
+    return flop_root
+
+
 class PostflopCFRSolver:
     """High-performance Counterfactual Regret Minimization (CFR+) solver for postflop nodes."""
 
@@ -465,6 +691,11 @@ class PostflopCFRSolver:
         hero_is_oop: bool = True,
         oop_invested_pre: Optional[float] = None,
         ip_invested_pre: Optional[float] = None,
+        tree_mode: str = "standard",
+        turn_samples: int = 8,
+        turn_card: Optional[str] = None,
+        river_samples: int = 1,
+        river_card: Optional[str] = None,
     ):
         self.board = [b.strip() for b in board]
         self.pot_pre = float(pot_pre)
@@ -504,16 +735,98 @@ class PostflopCFRSolver:
         }
 
         # Build Game Tree (support hand-continuous initial investments)
-        self.root = build_postflop_tree(
-            self.pot_pre,
-            self.effective_stack,
-            self.bet_config,
-            street="FLOP" if len(self.board) == 3 else ("TURN" if len(self.board) == 4 else "RIVER"),
-            oop_invested_pre=oop_invested_pre,
-            ip_invested_pre=ip_invested_pre,
-        )
+        tree_mode_norm = str(tree_mode or "standard").lower().strip()
+        turn_variant_board_keys: List[Tuple[str, ...]] = []
+
+        if tree_mode_norm == "flop_to_turn":
+            if len(self.board) != 3:
+                raise ValueError(
+                    f"flop_to_turn expects a FLOP board (len=3); got len={len(self.board)}"
+                )
+
+            known_dead_cards: List[str] = []
+            if hero_cards and isinstance(hero_cards, list):
+                known_dead_cards = [str(c).strip() for c in hero_cards if c]
+
+            # Mirror build_flop_to_turn_tree sampling so we can precompute
+            # equity matrices for every sampled TURN board variant.
+            dead_board = set(self.board)
+            known_dead = set(known_dead_cards)
+            turn_candidates = [
+                c for c in pe.ALL_CARDS if c not in dead_board and c not in known_dead
+            ]
+            if not turn_candidates:
+                raise ValueError("No turn candidates available")
+
+            sampled_turns: List[str]
+            forced_turn_card: Optional[str] = None
+
+            if turn_card is not None:
+                forced_turn_card = str(turn_card).strip()
+                if forced_turn_card not in turn_candidates:
+                    raise ValueError(
+                        f"turn_card={forced_turn_card!r} is not a valid turn outcome for the given flop/known cards"
+                    )
+                sampled_turns = [forced_turn_card]
+            else:
+                rng = random.Random(self.seed)
+                ts = int(turn_samples)
+                if ts is None or ts <= 0 or ts >= len(turn_candidates):
+                    sampled_turns = list(turn_candidates)
+                else:
+                    sampled_turns = rng.sample(turn_candidates, ts)
+
+            turn_variant_board_keys = [tuple(self.board + [t]) for t in sampled_turns]
+
+            forced_river_card: Optional[str] = (
+                str(river_card).strip() if river_card is not None else None
+            )
+
+            self.root = build_flop_to_turn_tree(
+                flop_board=self.board,
+                pot_pre=self.pot_pre,
+                effective_stack=self.effective_stack,
+                bet_config=self.bet_config,
+                oop_invested_pre=oop_invested_pre,
+                ip_invested_pre=ip_invested_pre,
+                turn_samples=int(turn_samples),
+                seed=self.seed,
+                known_dead_cards=known_dead_cards,
+                forced_turn_card=forced_turn_card,
+                river_samples=int(river_samples),
+                forced_river_card=forced_river_card,
+            )
+        else:
+            self.root = build_postflop_tree(
+                self.pot_pre,
+                self.effective_stack,
+                self.bet_config,
+                street="FLOP" if len(self.board) == 3 else ("TURN" if len(self.board) == 4 else "RIVER"),
+                oop_invested_pre=oop_invested_pre,
+                ip_invested_pre=ip_invested_pre,
+            )
+
+            # Standard mode has no explicit TURN board variant selection.
+            turn_variant_board_keys = []
+
+        # Stamp default board_key for all nodes.
+        default_board_key = tuple(self.board)
+
+        def _stamp(node: PostflopGameNode) -> None:
+            # Preserve board_key if a caller already stamped it (e.g. flop->turn).
+            # CHANCE nodes are not a concrete board variant, so we keep their
+            # board_key unset (None) instead of stamping the default board.
+            if node.board_key is None and node.player != "CHANCE":
+                node.board_key = default_board_key
+            for child in node.children.values():
+                _stamp(child)
+
+        _stamp(self.root)
 
         # Compute / Initialize Equity Matrix
+        # Standard mode computes a single equity matrix for self.board.
+        # flop->turn mode additionally computes equity matrices for each
+        # sampled TURN board_key so SHOWDOWN EV can select the right board.
         self.equity_matrix = pe.compute_postflop_equity_matrix(
             self.combos_oop,
             self.combos_ip,
@@ -521,6 +834,22 @@ class PostflopCFRSolver:
             iters_per_matchup=self.equity_iters,
             seed=self.seed,
         )
+
+        self.equity_matrices: Dict[
+            Tuple[str, ...],
+            Dict[Tuple[str, str], Dict[Tuple[str, str], float]],
+        ] = {tuple(self.board): self.equity_matrix}
+
+        if tree_mode_norm == "flop_to_turn" and turn_variant_board_keys:
+            for bkey in turn_variant_board_keys:
+                eq = pe.compute_postflop_equity_matrix(
+                    self.combos_oop,
+                    self.combos_ip,
+                    list(bkey),
+                    iters_per_matchup=self.equity_iters,
+                    seed=self.seed,
+                )
+                self.equity_matrices[bkey] = eq
 
         # Hero combo tracking for EV-by-action recommendation
         # Importante: as keys dos combos em postflop_evaluator vêm do gerador ALL_COMBOS_1326,
@@ -574,6 +903,12 @@ class PostflopCFRSolver:
 
     def _init_node_states(self, node: PostflopGameNode) -> None:
         if node.is_terminal:
+            return
+
+        # CHANCE nodes don't have player strategies/regrets.
+        if node.player == "CHANCE":
+            for child in node.children.values():
+                self._init_node_states(child)
             return
 
         combos = self.combos_oop if node.player == "OOP" else self.combos_ip
@@ -643,9 +978,9 @@ class PostflopCFRSolver:
                     f"Terminal {node.node_id} has unknown terminal_type={node.terminal_type!r}"
                 )
         else:
-            if node.player not in ("OOP", "IP"):
+            if node.player not in ("OOP", "IP", "CHANCE"):
                 raise ValueError(
-                    f"Decision node {node.node_id} must be OOP/IP, got {node.player!r}"
+                    f"Decision node {node.node_id} must be OOP/IP/CHANCE, got {node.player!r}"
                 )
 
         invested_sum = node.oop_invested + node.ip_invested
@@ -782,6 +1117,68 @@ class PostflopCFRSolver:
         if node.is_terminal:
             return self._compute_terminal_utilities(node, reach_oop, reach_ip)
 
+        # CHANCE nodes: probability-weight utilities; no CFR regret updates.
+        if node.player == "CHANCE":
+            actions = node.actions or list(node.children.keys())
+            if not actions:
+                # Degenerate: no outgoing outcomes.
+                return {
+                    "OOP": {c: 0.0 for c in self.combos_oop},
+                    "IP": {c: 0.0 for c in self.combos_ip},
+                }
+
+            probs = node.chance_probs or {}
+            p_sum = sum(float(probs.get(a, 0.0)) for a in actions)
+            if p_sum <= 1e-15:
+                p_map = {a: 1.0 / len(actions) for a in actions}
+            else:
+                p_map = {a: float(probs.get(a, 0.0)) / p_sum for a in actions}
+
+            ev_oop = {c: 0.0 for c in self.combos_oop}
+            ev_ip = {c: 0.0 for c in self.combos_ip}
+
+            for a in actions:
+                child = node.children.get(a)
+                if not child:
+                    continue
+                p = float(p_map.get(a, 0.0))
+                if p <= 0.0:
+                    continue
+
+                # Scale reaches so deeper regrets/strategy sums include chance mass.
+                # In multi-board (e.g. flop->turn) trees, the chosen chance
+                # outcome commits to a concrete board_key. Combo cards that
+                # overlap with that board variant become impossible, so we
+                # must zero their reach mass before recursing.
+                child_board_key = child.board_key if child.board_key is not None else None
+                dead_variant: Optional[Set[str]] = set(child_board_key) if child_board_key else None
+
+                if dead_variant:
+                    reach_oop_child = {
+                        c: (reach_oop.get(c, 0.0) * p)
+                        if (c[0] not in dead_variant and c[1] not in dead_variant)
+                        else 0.0
+                        for c in self.combos_oop
+                    }
+                    reach_ip_child = {
+                        c: (reach_ip.get(c, 0.0) * p)
+                        if (c[0] not in dead_variant and c[1] not in dead_variant)
+                        else 0.0
+                        for c in self.combos_ip
+                    }
+                else:
+                    reach_oop_child = {c: reach_oop.get(c, 0.0) * p for c in self.combos_oop}
+                    reach_ip_child = {c: reach_ip.get(c, 0.0) * p for c in self.combos_ip}
+
+                child_res = self._cfr_traverse(child, reach_oop_child, reach_ip_child, weight)
+
+                for c in self.combos_oop:
+                    ev_oop[c] += p * float(child_res["OOP"].get(c, 0.0))
+                for c in self.combos_ip:
+                    ev_ip[c] += p * float(child_res["IP"].get(c, 0.0))
+
+            return {"OOP": ev_oop, "IP": ev_ip}
+
         current_player = node.player
         combos = self.combos_oop if current_player == "OOP" else self.combos_ip
 
@@ -904,6 +1301,21 @@ class PostflopCFRSolver:
             return {"OOP": ev_oop, "IP": ev_ip}
 
         # SHOWDOWN: EV = equity_share * pot_after_rake - invested + rake_half
+        board_key = node.board_key if node.board_key is not None else tuple(self.board)
+
+        # Multi-board (flop->turn->river): compute the exact equity matrix for
+        # the concrete board variant when needed.
+        eq_matrix = self.equity_matrices.get(board_key)
+        if eq_matrix is None:
+            eq_matrix = pe.compute_postflop_equity_matrix(
+                self.combos_oop,
+                self.combos_ip,
+                list(board_key),
+                iters_per_matchup=self.equity_iters,
+                seed=self.seed,
+            )
+            self.equity_matrices[board_key] = eq_matrix
+
         for c_oop in self.combos_oop:
             oop_share_w = 0.0
             weight_count = 0.0
@@ -911,7 +1323,7 @@ class PostflopCFRSolver:
             for c_ip, r_ip in reach_ip.items():
                 if r_ip <= 0.0 or c_ip[0] in c_oop_set or c_ip[1] in c_oop_set:
                     continue
-                eq = self.equity_matrix.get(c_oop, {}).get(c_ip, 0.5)
+                eq = eq_matrix.get(c_oop, {}).get(c_ip, 0.5)
                 oop_share_w += r_ip * eq
                 weight_count += r_ip
             if weight_count > 0:
@@ -926,7 +1338,7 @@ class PostflopCFRSolver:
             for c_oop, r_oop in reach_oop.items():
                 if r_oop <= 0.0 or c_oop[0] in c_ip_set or c_oop[1] in c_ip_set:
                     continue
-                eq_oop = self.equity_matrix.get(c_oop, {}).get(c_ip, 0.5)
+                eq_oop = eq_matrix.get(c_oop, {}).get(c_ip, 0.5)
                 ip_share_w += r_oop * (1.0 - eq_oop)
                 weight_count += r_oop
             if weight_count > 0:
@@ -938,10 +1350,11 @@ class PostflopCFRSolver:
         return {"OOP": ev_oop, "IP": ev_ip}
 
     def _iter_decision_nodes(self, node: PostflopGameNode):
-        """Yield every non-terminal node in the betting tree."""
+        """Yield decision nodes in the betting tree (skip CHANCE nodes)."""
         if node.is_terminal:
             return
-        yield node
+        if node.player in ("OOP", "IP"):
+            yield node
         for child in node.children.values():
             yield from self._iter_decision_nodes(child)
 
@@ -983,15 +1396,9 @@ class PostflopCFRSolver:
             hero_reach = 0.0
             if self._hero_combo is not None:
                 if self.hero_is_oop:
-                    hero_reach = max(
-                        0.0,
-                        reach_oop.get(self._hero_combo, 0.0),
-                    )
+                    hero_reach = max(0.0, reach_oop.get(self._hero_combo, 0.0))
                 else:
-                    hero_reach = max(
-                        0.0,
-                        reach_ip.get(self._hero_combo, 0.0),
-                    )
+                    hero_reach = max(0.0, reach_ip.get(self._hero_combo, 0.0))
 
             opponent_mass = ip_mass if self.hero_is_oop else oop_mass
             node_reach_mass[node.node_id] = {
@@ -1002,10 +1409,42 @@ class PostflopCFRSolver:
                 "hero_joint": float(hero_reach * opponent_mass),
             }
 
+            # CHANCE nodes: branch probabilities come from chance_probs, not player strategies.
+            if node.player == "CHANCE":
+                actions = node.actions or list(node.children.keys())
+                probs = node.chance_probs or {}
+                p_sum = sum(float(probs.get(a, 0.0)) for a in actions)
+                if p_sum <= 1e-15:
+                    p_map = {a: 1.0 / len(actions) for a in actions}
+                else:
+                    p_map = {a: float(probs.get(a, 0.0)) / p_sum for a in actions}
+
+                action_reach: Dict[str, Dict[str, float]] = {}
+                for action in actions:
+                    p = float(p_map.get(action, 0.0))
+                    action_oop_mass = oop_mass * p
+                    action_ip_mass = ip_mass * p
+                    action_hero_reach = hero_reach * p
+                    action_reach[action] = {
+                        "oop": float(action_oop_mass),
+                        "ip": float(action_ip_mass),
+                        "joint": float(action_oop_mass * action_ip_mass),
+                        "hero": float(action_hero_reach),
+                        "hero_joint": float(action_hero_reach * opponent_mass),
+                    }
+                node_action_reach_mass[node.node_id] = action_reach
+
+                for action, child in node.children.items():
+                    p = float(p_map.get(action, 0.0))
+                    if p <= 0.0:
+                        continue
+                    child_oop = {c: reach_oop.get(c, 0.0) * p for c in reach_oop}
+                    child_ip = {c: reach_ip.get(c, 0.0) * p for c in reach_ip}
+                    collect_reach(child, child_oop, child_ip)
+                return
+
             combos = self.combos_oop if node.player == "OOP" else self.combos_ip
-            current_strategies = {
-                combo: average_strategy(node, combo) for combo in combos
-            }
+            current_strategies = {combo: average_strategy(node, combo) for combo in combos}
             action_reach: Dict[str, Dict[str, float]] = {}
             hero_player = "OOP" if self.hero_is_oop else "IP"
             for action in node.actions:
@@ -1056,37 +1495,53 @@ class PostflopCFRSolver:
             if node.is_terminal:
                 return
 
-            combos = self.combos_oop if node.player == "OOP" else self.combos_ip
-            weights = self.oop_combo_weights if node.player == "OOP" else self.ip_combo_weights
+            # CHANCE nodes: strategies are not player-controlled.
+            if node.player == "CHANCE":
+                combos: List[Tuple[str, str]] = []
+                weights: Dict[Tuple[str, str], float] = {}
+                node_combo_strats: Dict[Tuple[str, str], Dict[str, float]] = {}
+                class_strategies: Dict[str, Dict[str, float]] = {}
 
-            node_combo_strats: Dict[Tuple[str, str], Dict[str, float]] = {}
-            for c in combos:
-                s_sum = node.strategy_sum.get(c, {})
-                tot = sum(s_sum.values())
-                if tot > 0:
-                    node_combo_strats[c] = {a: s_sum[a] / tot for a in node.actions}
+                actions = node.actions or list(node.children.keys())
+                probs = node.chance_probs or {}
+                p_sum = sum(float(probs.get(a, 0.0)) for a in actions)
+                if p_sum <= 1e-15:
+                    overall_freqs = {a: 1.0 / len(actions) for a in actions}
                 else:
-                    d_p = 1.0 / len(node.actions)
-                    node_combo_strats[c] = {a: d_p for a in node.actions}
+                    overall_freqs = {a: float(probs.get(a, 0.0)) / p_sum for a in actions}
 
-            class_strategies: Dict[str, Dict[str, float]] = {}
-            for a in node.actions:
-                act_vals = {c: node_combo_strats[c][a] for c in combos}
-                agg = pe.aggregate_combos_to_classes(act_vals, weights)
-                for cls, val in agg.items():
-                    if cls not in class_strategies:
-                        class_strategies[cls] = {}
-                    class_strategies[cls][a] = val
+            else:
+                combos = self.combos_oop if node.player == "OOP" else self.combos_ip
+                weights = self.oop_combo_weights if node.player == "OOP" else self.ip_combo_weights
 
-            # Overall frequency of each action at this node
-            overall_freqs: Dict[str, float] = {}
-            total_active_weight = sum(weights.get(c, 0.0) for c in combos)
-            for a in node.actions:
-                if total_active_weight > 0:
-                    action_weight = sum(node_combo_strats[c][a] * weights.get(c, 0.0) for c in combos)
-                    overall_freqs[a] = action_weight / total_active_weight
-                else:
-                    overall_freqs[a] = 1.0 / len(node.actions)
+                node_combo_strats: Dict[Tuple[str, str], Dict[str, float]] = {}
+                for c in combos:
+                    s_sum = node.strategy_sum.get(c, {})
+                    tot = sum(s_sum.values())
+                    if tot > 0:
+                        node_combo_strats[c] = {a: s_sum[a] / tot for a in node.actions}
+                    else:
+                        d_p = 1.0 / len(node.actions)
+                        node_combo_strats[c] = {a: d_p for a in node.actions}
+
+                class_strategies: Dict[str, Dict[str, float]] = {}
+                for a in node.actions:
+                    act_vals = {c: node_combo_strats[c][a] for c in combos}
+                    agg = pe.aggregate_combos_to_classes(act_vals, weights)
+                    for cls, val in agg.items():
+                        if cls not in class_strategies:
+                            class_strategies[cls] = {}
+                        class_strategies[cls][a] = val
+
+                # Overall frequency of each action at this node
+                overall_freqs: Dict[str, float] = {}
+                total_active_weight = sum(weights.get(c, 0.0) for c in combos)
+                for a in node.actions:
+                    if total_active_weight > 0:
+                        action_weight = sum(node_combo_strats[c][a] * weights.get(c, 0.0) for c in combos)
+                        overall_freqs[a] = action_weight / total_active_weight
+                    else:
+                        overall_freqs[a] = 1.0 / len(node.actions)
 
             # Node metadata and strategies
             action_outcomes: Dict[str, Dict[str, Any]] = {}
@@ -1147,6 +1602,7 @@ class PostflopCFRSolver:
                 "player": node.player,
                 "pot": node.pot,
                 "street": node.street,
+                "board_key": list(node.board_key) if node.board_key is not None else None,
                 "oop_invested": node.oop_invested,
                 "ip_invested": node.ip_invested,
                 "reach_mass": reach_mass,

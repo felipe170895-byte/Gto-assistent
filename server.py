@@ -1,7 +1,8 @@
 import json
 import os
+from pathlib import Path
 from http.server import BaseHTTPRequestHandler, HTTPServer
-from urllib.parse import unquote
+from urllib.parse import unquote, parse_qs
 
 ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
 STORAGE_DIR = os.path.join(ROOT_DIR, "storage")
@@ -212,60 +213,101 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         # (CORS não é crítico pra GET estático, mas manter comportamentos consistentes)
 
-        path = unquote(self.path.split("?", 1)[0])
+        raw_path = self.path
+        path_part, _, query_part = raw_path.partition("?")
+        path = unquote(path_part)
         if path.startswith("/"):
             path = path[1:]
 
-        # Diagnóstico Mode 1 v2 (quick readiness + shape checks)
+        query = parse_qs(query_part)
+
+        # Diagnóstico Mode 1 v2 (shape + expected file availability)
         if path == STATUS_PATH.lstrip("/"):
             hero_positions = ["CO", "BTN", "BB"]
             vill_open_positions = ["UTG", "CO", "BTN"]
 
+            # Optional query params:
+            #   - openSize (default: 2.2)
+            #   - stack (default: 100)
+            #   - rangeProfile (default: standard)
+            # Kept for UI/status sanity checks.
+            open_size_req = normalize_open_size(query.get("openSize", [DEFAULT_OPEN_SIZE])[0] if isinstance(query.get("openSize"), list) else DEFAULT_OPEN_SIZE)
+
+            stack_raw = query.get("stack", ["100"])[0] if isinstance(query.get("stack"), list) else "100"
+            try:
+                stack_int = int(round(float(stack_raw)))
+            except Exception:
+                stack_int = 100
+            if stack_int not in ALLOWED_STACKS:
+                stack_int = 100
+
+            range_profile = normalize_range_profile(query.get("rangeProfile", ["standard"])[0] if isinstance(query.get("rangeProfile"), list) else "standard")
+
             records = []
             rfi_records = []
+
             for hero_pos in hero_positions:
                 for vill_open_pos in vill_open_positions:
-                    # Status endpoint intentionally checks openSize=2.2 (legacy naming).
-                    fname = f"preflop_gto_defend_{hero_pos}_vsOpen_{vill_open_pos}.json"
-                    fpath = os.path.join(STORAGE_DIR, fname)
-                    exists = os.path.exists(fpath)
+                    # DEFEND (vilão responde ao open do herói)
+                    storage_file, stack_used, open_used, rp_used, fallback_reason = resolve_strategy_path(
+                        "defend",
+                        hero_pos,
+                        vill_open_pos,
+                        stack_int,
+                        range_profile,
+                        open_size_req,
+                    )
+
+                    legacy_fname = f"preflop_gto_defend_{hero_pos}_vsOpen_{vill_open_pos}.json"
+                    sel_fname = os.path.basename(storage_file) if storage_file else legacy_fname
+                    exists = bool(storage_file and os.path.exists(storage_file))
+
                     rec = {
                         "hero_pos": hero_pos,
                         "vill_open_pos": vill_open_pos,
-                        "file": fname,
+                        "file": sel_fname,
                         "exists": exists,
+                        "effective_stack_used": stack_used,
+                        "openSize_used": open_used,
+                        "rangeProfile_used": rp_used,
+                        "fallback_reason": fallback_reason,
+                        "requested": {
+                            "openSize": open_size_req,
+                            "stack": stack_int,
+                            "rangeProfile": range_profile,
+                        },
                     }
-                    if exists:
-                        try:
-                            with open(fpath, "r", encoding="utf-8") as f:
-                                data = json.load(f)
-                            params = data.get("params") if isinstance(data.get("params"), dict) else {}
-                            rec["params_vill_open_pos"] = params.get("vill_open_pos")
-                            rec["has_hero_evs"] = isinstance(data.get("hero_evs"), dict)
-                            rec["has_hero_strategy"] = isinstance(data.get("hero_strategy"), dict)
-                        except Exception as e:
-                            rec["json_error"] = str(e)
                     records.append(rec)
 
-                    rfi_fname = f"preflop_gto_rfi_{hero_pos}_vsOpen_{vill_open_pos}.json"
-                    rfi_fpath = os.path.join(STORAGE_DIR, rfi_fname)
-                    rfi_exists = os.path.exists(rfi_fpath)
+                    # RFI (herói abre primeiro)
+                    rfi_storage_file, rfi_stack_used, rfi_open_used, rfi_rp_used, rfi_fallback_reason = resolve_strategy_path(
+                        "rfi",
+                        hero_pos,
+                        vill_open_pos,
+                        stack_int,
+                        range_profile,
+                        open_size_req,
+                    )
+
+                    rfi_legacy_fname = f"preflop_gto_rfi_{hero_pos}_vsOpen_{vill_open_pos}.json"
+                    rfi_sel_fname = os.path.basename(rfi_storage_file) if rfi_storage_file else rfi_legacy_fname
+                    rfi_exists = bool(rfi_storage_file and os.path.exists(rfi_storage_file))
+
                     rfi_rec = {
                         "hero_pos": hero_pos,
                         "vill_open_pos": vill_open_pos,
-                        "file": rfi_fname,
+                        "file": rfi_sel_fname,
                         "exists": rfi_exists,
+                        "effective_stack_used": rfi_stack_used,
+                        "openSize_used": rfi_open_used,
+                        "rangeProfile_used": rfi_rp_used,
+                        "fallback_reason": rfi_fallback_reason,
+                        "requested": {
+                            "openSize": open_size_req,
+                            "stack": stack_int,
+                            "rangeProfile": range_profile,
+                        },
                     }
-                    if rfi_exists:
-                        try:
-                            with open(rfi_fpath, "r", encoding="utf-8") as f:
-                                data = json.load(f)
-                            params = data.get("params") if isinstance(data.get("params"), dict) else {}
-                            rfi_rec["params_vill_open_pos"] = params.get("vill_open_pos")
-                            rfi_rec["has_hero_evs"] = isinstance(data.get("hero_evs"), dict)
-                            rfi_rec["has_hero_strategy"] = isinstance(data.get("hero_strategy"), dict)
-                        except Exception as e:
-                            rfi_rec["json_error"] = str(e)
                     rfi_records.append(rfi_rec)
 
             existing_count = sum(1 for r in records if r.get("exists"))
@@ -275,16 +317,36 @@ class Handler(BaseHTTPRequestHandler):
                 "v2_files_existing": existing_count,
                 "rfi_files_total": len(rfi_records),
                 "rfi_files_existing": rfi_existing_count,
+                "requested": {
+                    "openSize": open_size_req,
+                    "stack": stack_int,
+                    "rangeProfile": range_profile,
+                },
                 "files": records,
                 "rfi_files": rfi_records,
             })
             return
 
-        # Prevent directory traversal
-        fs_path = os.path.abspath(os.path.join(ROOT_DIR, path))
-        if not fs_path.startswith(os.path.abspath(ROOT_DIR)):
+        # Prevent directory traversal (Windows-safe)
+        root_resolved = Path(ROOT_DIR).resolve()
+        req_path = Path(path)
+
+        # Reject absolute paths / drive-letter paths even if the request was prefixed.
+        if req_path.is_absolute() or req_path.drive:
             send_json(self, 403, {"error": "forbidden"})
             return
+
+        target_resolved = (root_resolved / req_path).resolve()
+
+        root_str = str(root_resolved).casefold()
+        target_str = str(target_resolved).casefold()
+        allowed = (target_str == root_str) or any(str(p).casefold() == root_str for p in target_resolved.parents)
+
+        if not allowed:
+            send_json(self, 403, {"error": "forbidden"})
+            return
+
+        fs_path = str(target_resolved)
 
         if os.path.isdir(fs_path):
             # basic directory handling
@@ -364,14 +426,40 @@ class Handler(BaseHTTPRequestHandler):
             equity_iters = int(req.get("equity_iters", 12))
             bet_config = req.get("betConfig", None)
             hero_cards = req.get("heroCards", None)
+            if hero_cards is None:
+                # Back-compat for older payloads / tests using snake_case.
+                hero_cards = req.get("hero_cards", None)
             pot_pre_override = req.get("pot_pre_override", None)
             if pot_pre_override is not None:
                 pot_pre_override = float(pot_pre_override)
 
             preflop_action = req.get("preflop_action", None)
 
+            tree_mode = str(req.get("tree_mode", "standard") or "standard").lower().strip()
+            # Default to compact to keep payload small enough for the HTTP client.
+            response_mode = str(req.get("response_mode", "compact") or "compact").lower().strip()
+            turn_samples = req.get("turn_samples", 8)
+            try:
+                turn_samples = int(turn_samples)
+            except Exception:
+                turn_samples = 8
+
+            turn_card = req.get("turn_card", None)
+
+            river_samples = req.get("river_samples", 1)
+            try:
+                river_samples = int(river_samples)
+            except Exception:
+                river_samples = 1
+
+            river_card = req.get("river_card", None)
+
             oop_invested_pre = req.get("oop_invested_pre", None)
             ip_invested_pre = req.get("ip_invested_pre", None)
+
+            if tree_mode == "flop_to_turn" and len(board) != 3:
+                send_json(self, 400, {"error": "flop_to_turn expects board length 3 (a flop)"})
+                return
             if oop_invested_pre is not None:
                 oop_invested_pre = float(oop_invested_pre)
             if ip_invested_pre is not None:
@@ -394,6 +482,12 @@ class Handler(BaseHTTPRequestHandler):
                     ip_invested_pre=ip_invested_pre,
                     preflop_action=preflop_action,
                     hero_cards=hero_cards,
+                    tree_mode=tree_mode,
+                    turn_samples=turn_samples,
+                    turn_card=turn_card,
+                    river_samples=river_samples,
+                    river_card=river_card,
+                    response_mode=response_mode,
                 )
 
                 if isinstance(hero_cards, list) and len(hero_cards) == 2:

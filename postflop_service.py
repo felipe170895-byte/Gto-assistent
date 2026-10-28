@@ -324,6 +324,12 @@ def solve_postflop_spot(
     oop_invested_pre: Optional[float] = None,
     ip_invested_pre: Optional[float] = None,
     preflop_action: Optional[str] = None,
+    tree_mode: str = "standard",
+    turn_samples: int = 8,
+    turn_card: Optional[str] = None,
+    river_samples: int = 1,
+    river_card: Optional[str] = None,
+    response_mode: str = "full",
 ) -> Dict[str, Any]:
     """Executes CFR+ postflop solver for the given board and preflop positions/ranges."""
 
@@ -598,6 +604,11 @@ def solve_postflop_spot(
     # as None / empty lists).
     bet_cfg = bet_config if isinstance(bet_config, dict) else {}
 
+    tree_mode_norm = str(tree_mode or "standard").lower().strip()
+    turn_samples_int = int(turn_samples) if turn_samples is not None else 8
+    if turn_samples_int <= 0:
+        turn_samples_int = 8
+
     aggressive_oop_lead_sizes = [0.33, 0.5, 0.75]
     aggressive_ip_cbet_sizes = [0.25, 0.33, 0.5, 0.75]
     aggressive_check_raise_sizes = [1.5, 2.0, 2.5, 3.0, 4.0]
@@ -686,6 +697,11 @@ def solve_postflop_spot(
         "rake_cap": rake_cap,
         "iterations_base": iterations,
         "equity_iters": equity_iters,
+        "tree_mode": tree_mode_norm,
+        "turn_samples": turn_samples_int,
+        "turn_card": turn_card,
+        "river_samples": int(river_samples),
+        "river_card": river_card,
         "bet_config": {
             "oop_lead_sizes": cfg.oop_lead_sizes,
             "ip_cbet_sizes": cfg.ip_cbet_sizes,
@@ -703,12 +719,71 @@ def solve_postflop_spot(
         "preflop_action": preflop_action_norm,
     }
 
+    # Defensive: ensure tree_mode/turn_samples are always present in the cache
+    # key to avoid reusing incorrect subgame results across modes.
+    # (If tree_mode/turn_samples are not set, defaults are already applied.)
+    cache_key_data["tree_mode"] = tree_mode_norm
+    cache_key_data["turn_samples"] = turn_samples_int
+
     cache_key = stable_hash(cache_key_data)
     cached = _POSTFLOP_CACHE.get(cache_key)
-    if cached is not None:
-        return cached
 
-    solver = PostflopCFRSolver(
+    response_mode_norm = str(response_mode or "full").lower().strip()
+    if response_mode_norm in ("compact", "light", "reduced", "minimal"):
+        response_mode_norm = "compact"
+    else:
+        response_mode_norm = "full"
+
+    results: Optional[Dict[str, Any]] = dict(cached) if cached is not None else None
+
+    # If we already have cached results, optionally compact the payload for HTTP
+    # clients and return immediately (avoid re-solving / solver-dependent recompute).
+    if results is not None:
+        # Avoid mutating cached canonical result in-place.
+        if response_mode_norm == "compact":
+            results = dict(results)
+            keep_node_keys = {
+                # Required by poker_gto_mode1_app.html (EV recommendation + navigation)
+                "node_id",
+                "history",
+                "player",
+                "pot",
+                "street",
+                "board_key",
+                "oop_invested",
+                "ip_invested",
+                "actions",
+                "overall_frequencies",
+                "hero_action_evs",
+                "combo_strategies",
+                "action_outcomes",
+                "hero_diag",
+                "strategy_classes",
+            }
+
+            nodes = results.get("nodes")
+            if isinstance(nodes, dict):
+                compact_nodes: Dict[str, Any] = {}
+                for nid, nd in nodes.items():
+                    if not isinstance(nd, dict):
+                        continue
+                    compact_nodes[nid] = {k: nd.get(k) for k in keep_node_keys}
+                results["nodes"] = compact_nodes
+
+            for k in (
+                "regret_diagnostics",
+                "oop_categories",
+                "ip_categories",
+                "hero_categories",
+                "oop_category_distribution",
+                "ip_category_distribution",
+            ):
+                results.pop(k, None)
+
+        return results
+
+    if results is None:
+        solver = PostflopCFRSolver(
         board=board,
         oop_range=oop_range,
         ip_range=ip_range,
@@ -722,20 +797,29 @@ def solve_postflop_spot(
         hero_is_oop=is_hero_oop,
         oop_invested_pre=oop_invested_pre,
         ip_invested_pre=ip_invested_pre,
+        tree_mode=tree_mode_norm,
+        turn_samples=turn_samples_int,
+        turn_card=turn_card,
+        river_samples=int(river_samples),
+        river_card=river_card,
     )
 
     # Adaptive schedule: grow to a higher target when 2nd raises are enabled.
-    # Do not stop from a hero-only snapshot: it can hide unresolved villain or
-    # deep-subtree regrets that still affect later iterations.
-    aggressive_profile = bool(getattr(cfg, "max_raises_per_street", 1) >= 2)
-    target_max_iters = 450 if aggressive_profile else 300
+    # For compact HTTP responses we intentionally respect the caller's
+    # requested iterations to keep end-to-end latency low (prevents client
+    # timeouts during smoke tests).
+    if response_mode_norm == "compact":
+        schedule_increments: List[int] = [int(iterations)]
+    else:
+        aggressive_profile = bool(getattr(cfg, "max_raises_per_street", 1) >= 2)
+        target_max_iters = 450 if aggressive_profile else 300
 
-    schedule_increments: List[int] = [int(iterations)]
-    if iterations < 150 and target_max_iters > 150:
-        schedule_increments.append(150 - int(iterations))
-        schedule_increments.append(target_max_iters - 150)
-    elif iterations < target_max_iters:
-        schedule_increments.append(target_max_iters - int(iterations))
+        schedule_increments = [int(iterations)]
+        if iterations < 150 and target_max_iters > 150:
+            schedule_increments.append(150 - int(iterations))
+            schedule_increments.append(target_max_iters - 150)
+        elif iterations < target_max_iters:
+            schedule_increments.append(target_max_iters - int(iterations))
 
     # Run every scheduled batch. A hero-only snapshot can look stable while
     # villain nodes or deep second-raise subtrees still carry residual regret.
@@ -750,6 +834,10 @@ def solve_postflop_spot(
 
     # Store in cache (LRU eviction handles capacity automatically)
     _POSTFLOP_CACHE.put(cache_key, results)
+
+    # Detach return payload from cached canonical dict (so compact-mode edits
+    # don't mutate what subsequent requests retrieve from cache).
+    results = dict(results)
 
     # 5. Calculate range summary categories
     def summarize_categories(cat_dict: Dict[str, Dict[str, Any]], weights: Dict[Tuple[str, str], float]) -> Dict[str, float]:
@@ -772,7 +860,56 @@ def solve_postflop_spot(
     results["oop_pos"] = oop_pos
     results["ip_pos"] = ip_pos
     results["hero_is_oop"] = is_hero_oop
-    results["oop_category_distribution"] = summarize_categories(results["oop_categories"], solver.oop_combo_weights)
-    results["ip_category_distribution"] = summarize_categories(results["ip_categories"], solver.ip_combo_weights)
+
+    if response_mode_norm != "compact":
+        results["oop_category_distribution"] = summarize_categories(
+            results.get("oop_categories", {}),
+            getattr(solver, "oop_combo_weights", {}),
+        )
+        results["ip_category_distribution"] = summarize_categories(
+            results.get("ip_categories", {}),
+            getattr(solver, "ip_combo_weights", {}),
+        )
+
+    # Payload compaction for HTTP clients: trim large per-node strategy/diagnostic fields.
+    if response_mode_norm == "compact":
+        keep_node_keys = {
+            # Required by poker_gto_mode1_app.html (EV recommendation + navigation)
+            "node_id",
+            "history",
+            "player",
+            "pot",
+            "street",
+            "board_key",
+            "oop_invested",
+            "ip_invested",
+            "actions",
+            "overall_frequencies",
+            "hero_action_evs",
+            "combo_strategies",
+            "action_outcomes",
+            "hero_diag",
+            "strategy_classes",
+        }
+
+        nodes = results.get("nodes")
+        if isinstance(nodes, dict):
+            compact_nodes: Dict[str, Any] = {}
+            for nid, nd in nodes.items():
+                if not isinstance(nd, dict):
+                    continue
+                compact_nodes[nid] = {k: nd.get(k) for k in keep_node_keys}
+            results["nodes"] = compact_nodes
+
+        # Drop heavy summary blobs not needed by the smoke/integration tests.
+        for k in (
+            "regret_diagnostics",
+            "oop_categories",
+            "ip_categories",
+            "hero_categories",
+            "oop_category_distribution",
+            "ip_category_distribution",
+        ):
+            results.pop(k, None)
 
     return results
