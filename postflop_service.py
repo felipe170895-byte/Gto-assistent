@@ -415,7 +415,17 @@ def solve_postflop_spot(
     # for the equity-matrix + CFR(+)+bookkeeping. This prevents OS kills
     # during end-to-end validation while preserving the hero exact class.
     prune_min_w = 1e-6
-    if iterations <= 80:
+    # Runtime tuning: for very small CFR budgets (used by HTTP smoke/contract
+    # tests) the equity-matrix + CFR bookkeeping dominates. Prune more
+    # aggressively so the endpoint stays latency-bounded, while still
+    # preserving the hero exact class via must_include=hero_cls.
+    if iterations <= 10:
+        prune_keep_n = 12
+        prune_mass_fraction = 0.80
+    elif iterations <= 30:
+        prune_keep_n = 16
+        prune_mass_fraction = 0.86
+    elif iterations <= 80:
         prune_keep_n = 22
         prune_mass_fraction = 0.90
     elif iterations <= 150:

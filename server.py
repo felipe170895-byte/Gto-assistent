@@ -423,7 +423,26 @@ class Handler(BaseHTTPRequestHandler):
             rake_pct = float(req.get("rakePct", 0.05))
             rake_cap = float(req.get("rakeCap", 3.0))
             iterations = int(req.get("iterations", 150))
-            equity_iters = int(req.get("equity_iters", 12))
+            # Keep equity matrix iteration budget aligned with the UI:
+            #   iters <= 80  -> 8
+            #   iters <= 150 -> 12
+            #   else         -> 20
+            # If the caller doesn't provide equity_iters, we select the same
+            # defaults to avoid slow end-to-end HTTP calls.
+            if "equity_iters" in req:
+                equity_iters = int(req.get("equity_iters", 12))
+            else:
+                # For small iteration budgets the equity matrix dominates runtime
+                # (FLOP equity is computed by Monte-Carlo). Keep it extra conservative
+                # to prevent end-to-end HTTP timeouts.
+                if iterations <= 30:
+                    equity_iters = 4
+                elif iterations <= 80:
+                    equity_iters = 8
+                elif iterations <= 150:
+                    equity_iters = 12
+                else:
+                    equity_iters = 20
             bet_config = req.get("betConfig", None)
             hero_cards = req.get("heroCards", None)
             if hero_cards is None:
@@ -438,6 +457,24 @@ class Handler(BaseHTTPRequestHandler):
             tree_mode = str(req.get("tree_mode", "standard") or "standard").lower().strip()
             # Default to compact to keep payload small enough for the HTTP client.
             response_mode = str(req.get("response_mode", "compact") or "compact").lower().strip()
+
+            # Compact HTTP calls must stay latency-bounded. If the caller
+            # omits sizing-grid expansion or raise-depth controls, apply
+            # conservative defaults to prevent server-side timeouts.
+            if response_mode == "compact" and isinstance(bet_config, dict):
+                bet_config = dict(bet_config)  # avoid mutating caller payload
+
+                if "expand_partial_sizes" not in bet_config:
+                    bet_config["expand_partial_sizes"] = False
+                if "max_raises_per_street" not in bet_config or bet_config.get("max_raises_per_street") is None:
+                    bet_config["max_raises_per_street"] = 1
+
+                # If ip_raise_sizes is omitted, the solver's aggressive default
+                # raise grid can blow up the tree even for small iteration
+                # budgets (used by the Mode 1 real-API validation script).
+                if "ip_raise_sizes" not in bet_config or bet_config.get("ip_raise_sizes") is None:
+                    bet_config["ip_raise_sizes"] = [2.0]
+
             turn_samples = req.get("turn_samples", 8)
             try:
                 turn_samples = int(turn_samples)
