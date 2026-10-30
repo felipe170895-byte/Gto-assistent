@@ -1445,7 +1445,6 @@
       statusCalls: document.getElementById('status-calls'),
       statusOk: document.getElementById('status-ok'),
       statusErr: document.getElementById('status-err'),
-      openUsedPill: document.getElementById('open-used-pill'),
       posBadge: document.getElementById('matrix-pos-badge'),
       potDisplay: document.getElementById('pot-display'),
       heroCards: document.getElementById('hero-cards'),
@@ -1468,26 +1467,6 @@
     function setFeedback(html, kind) {
       UI.feedback.innerHTML = html;
       UI.feedback.className = kind === 'err' ? 'mt-1 text-sm text-rose-300' : (kind === 'ok' ? 'mt-1 text-sm text-emerald-200' : 'mt-1 text-sm text-slate-200');
-    }
-
-    function incIntText(el, delta) {
-      if (!el) return;
-      const d = (delta == null) ? 1 : delta;
-      const cur = parseInt(el.textContent || '0', 10);
-      el.textContent = String((Number.isFinite(cur) ? cur : 0) + d);
-    }
-
-    function escHtml(x) {
-      return String(x ?? '').replace(/[&<>"']/g, (ch) => {
-        switch (ch) {
-          case '&': return '&amp;';
-          case '<': return '&lt;';
-          case '>': return '&gt;';
-          case '"': return '&quot;';
-          case "'": return '&#39;';
-          default: return ch;
-        }
-      });
     }
 
     function pickRandomHand() {
@@ -1563,49 +1542,30 @@
     }
 
     function renderSolverBars(data) {
-      if (!data || !Array.isArray(data.evs) || !Array.isArray(data.strategy)) {
-        throw new Error('Resposta do solver inválida (evs/strategy ausentes).');
-      }
-
-      const evs3 = [data.evs[0], data.evs[1], data.evs[2]].map((x) => {
-        const n = Number(x);
-        return Number.isFinite(n) ? n : -Infinity;
-      });
-
-      const strat3raw = [data.strategy[0], data.strategy[1], data.strategy[2]].map((x) => {
-        const n = Number(x);
-        return Number.isFinite(n) ? n : 0;
-      });
-
-      const clamp01 = (x) => Math.max(0, Math.min(1, x));
-      const strat3 = strat3raw.map(clamp01);
-
+      const evs = data.evs;
+      const strat = data.strategy;
       const toFixedEv = (x) => (Number.isFinite(x) ? x.toFixed(4) : '—');
 
-      UI.evFold.textContent = toFixedEv(evs3[0]);
-      UI.evCall.textContent = toFixedEv(evs3[1]);
-      UI.evThree.textContent = toFixedEv(evs3[2]);
+      UI.evFold.textContent = toFixedEv(evs[0]);
+      UI.evCall.textContent = toFixedEv(evs[1]);
+      UI.evThree.textContent = toFixedEv(evs[2]);
 
-      UI.mixFold.textContent = `${(strat3[0] * 100).toFixed(1)}%`;
-      UI.mixCall.textContent = `${(strat3[1] * 100).toFixed(1)}%`;
-      UI.mixThree.textContent = `${(strat3[2] * 100).toFixed(1)}%`;
+      UI.mixFold.textContent = `${(strat[0]*100).toFixed(1)}%`;
+      UI.mixCall.textContent = `${(strat[1]*100).toFixed(1)}%`;
+      UI.mixThree.textContent = `${(strat[2]*100).toFixed(1)}%`;
 
-      UI.barFold.style.width = (strat3[0] * 100).toFixed(1) + '%';
-      UI.barCall.style.width = (strat3[1] * 100).toFixed(1) + '%';
-      UI.barThree.style.width = (strat3[2] * 100).toFixed(1) + '%';
+      UI.barFold.style.width = (strat[0]*100).toFixed(1) + '%';
+      UI.barCall.style.width = (strat[1]*100).toFixed(1) + '%';
+      UI.barThree.style.width = (strat[2]*100).toFixed(1) + '%';
 
       [UI.foldBtn, UI.callBtn, UI.threeBtn].forEach(b => b.classList.remove('action-best'));
-      const idxEv = evs3.reduce((best, x, idx) => (x > evs3[best] ? idx : best), 0);
+      const idxEv = evs.reduce((best, x, idx) => (x > evs[best] ? idx : best), 0);
       [UI.foldBtn, UI.callBtn, UI.threeBtn][idxEv].classList.add('action-best');
 
       const labels = ['FOLD', 'CALL', '3BET'];
-      const bestEv = evs3[idxEv];
-      const bestAct = labels[idxEv];
-      const evStr = (Number.isFinite(bestEv) && bestEv !== -Infinity) ? bestEv.toFixed(4) : '—';
-
       UI.recommendation.innerHTML = `
-        <div class="text-slate-200"><b>Ação Ótima GTO:</b> <span class="text-emerald-400 font-bold">${bestAct}</span></div>
-        <div class="text-slate-400 mt-1 text-xs">EV: ${evStr} • Mix Freq: ${(strat3[idxEv] * 100).toFixed(1)}%</div>
+        <div class="text-slate-200"><b>Ação Ótima GTO:</b> <span class="text-emerald-400 font-bold">${labels[idxEv]}</span></div>
+        <div class="text-slate-400 mt-1 text-xs">EV: ${evs[idxEv].toFixed(4)} • Mix Freq: ${(strat[idxEv]*100).toFixed(1)}%</div>
       `;
     }
 
@@ -1645,8 +1605,6 @@
       document.getElementById('stack-badge').textContent = `${stack}bb`;
 
       try {
-        incIntText(UI.statusCalls, 1);
-
         const API_URL = (window.location.protocol === 'file:')
           ? 'http://localhost:8000/api/query_preflop_gto.php'
           : new URL('/api/query_preflop_gto.php', window.location.origin).toString();
@@ -1665,27 +1623,9 @@
           })
         });
 
-        if (!resp.ok) {
-          let bodyTxt = '';
-          try {
-            bodyTxt = await resp.text();
-          } catch (e) {
-            bodyTxt = '';
-          }
-          throw new Error(`HTTP ${resp.status}: ${resp.statusText}${bodyTxt ? ' - ' + bodyTxt.slice(0, 200) : ''}`);
-        }
-
-        let data = null;
-        try {
-          data = await resp.json();
-        } catch (e) {
-          throw new Error('Resposta JSON inválida do solver.');
-        }
-
-        document.getElementById('hero-class-badge').textContent = data?.hero_class || '—';
+        const data = await resp.json();
+        document.getElementById('hero-class-badge').textContent = data.hero_class || '—';
         renderSolverBars(data);
-
-        const strategyArr = Array.isArray(data?.strategy) ? data.strategy : [];
 
         lastPreflopSpot = {
           heroPos,
@@ -1694,44 +1634,19 @@
           openSize,
           spotType: chosenSpotType,
           cards: [`${cards[0].r}${cards[0].s}`, `${cards[1].r}${cards[1].s}`],
-          heroClass: data?.hero_class || comboLabel(cards),
-          callMix: strategyArr.length >= 2 ? Number(strategyArr[1] || 0) : 0,
+          heroClass: data.hero_class || comboLabel(cards),
+          callMix: Array.isArray(data.strategy) ? Number(data.strategy[1] || 0) : 0,
         };
-
-        const usedOpen = data?.openSize_used;
-        const usedStack = data?.effective_stack_used;
-        const usedRp = data?.rangeProfile_used;
-
-        // For hand-continuous training, keep the same open/stack that was actually used to pick JSON.
-        if (lastPreflopSpot) {
-          if (typeof usedOpen === 'number' && Number.isFinite(usedOpen)) lastPreflopSpot.openSize = usedOpen;
-          if (typeof usedStack === 'number' && Number.isFinite(usedStack)) lastPreflopSpot.stack = usedStack;
-        }
-
-        if (UI.openUsedPill) {
-          const usedOpenStr = (typeof usedOpen === 'number' && Number.isFinite(usedOpen)) ? usedOpen.toFixed(1) : (usedOpen ?? openSize);
-          const usedStackStr = (typeof usedStack === 'number' && Number.isFinite(usedStack)) ? usedStack : (usedStack ?? stack);
-          const usedRpStr = usedRp ?? (document.getElementById('filter-range-profile')?.value || 'standard');
-          UI.openUsedPill.textContent = `Open: ${usedOpenStr}bb • Stack: ${usedStackStr}bb • RP: ${usedRpStr}`;
-        }
 
         const callHint = chosenSpotType === 'defend'
           ? ' CALL leva esta mão ao flop.'
           : ' CALL no RFI não vai ao flop (você ainda não abriu).';
-
-        const fallbackReason = data?.fallback_reason;
-        const fallbackHtml = fallbackReason
-          ? `<div class="mt-1 text-xs text-amber-300">Fallback: ${escHtml(fallbackReason)}</div>`
-          : '';
-
-        setFeedback('GTO calculado. Escolha uma ação para treinar.' + callHint + fallbackHtml, 'ok');
+        setFeedback('GTO calculado. Escolha uma ação para treinar.' + callHint, 'ok');
         updateButtonsEnabled(true);
-        incIntText(UI.statusOk, 1);
       } catch (err) {
         console.error(err);
-        incIntText(UI.statusErr, 1);
         lastPreflopSpot = null;
-        setFeedback('Erro ao consultar solver: ' + (err?.message || String(err)), 'err');
+        setFeedback('Erro ao consultar solver: ' + err.message, 'err');
       } finally {
         isPreflopLocked = false;
         UI.generate.disabled = false;
