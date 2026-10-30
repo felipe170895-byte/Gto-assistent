@@ -322,23 +322,11 @@ def compute_postflop_equity_matrix(
 
     eq_matrix: Dict[Tuple[str, str], Dict[Tuple[str, str], float]] = {c: {} for c in combos_oop}
 
-    # Safety for multi-board / CHANCE trees:
-    # if a particular board variant includes a card that also appears in a
-    # combo (hole card overlap), that combo is impossible for that board.
-    # We skip it here to avoid duplicate-card evaluations.
-    def _combo_overlaps_board(combo: Tuple[str, str]) -> bool:
-        return combo[0] in dead_board or combo[1] in dead_board
-
-
     if len(board) == 5:
         # River: Instant deterministic showdown
         for c_oop in combos_oop:
-            if _combo_overlaps_board(c_oop):
-                continue
             cards_oop = (parse_card(c_oop[0]), parse_card(c_oop[1]))
             for c_ip in combos_ip:
-                if _combo_overlaps_board(c_ip):
-                    continue
                 if c_oop[0] == c_ip[0] or c_oop[0] == c_ip[1] or c_oop[1] == c_ip[0] or c_oop[1] == c_ip[1]:
                     continue
                 cards_ip = (parse_card(c_ip[0]), parse_card(c_ip[1]))
@@ -348,13 +336,9 @@ def compute_postflop_equity_matrix(
         # Turn: Exact rollout over all remaining river cards (44 cards)
         # No Monte Carlo - exact calculation (more efficient than sampling)
         for c_oop in combos_oop:
-            if _combo_overlaps_board(c_oop):
-                continue
             cards_oop = (parse_card(c_oop[0]), parse_card(c_oop[1]))
             set_oop = {c_oop[0], c_oop[1]}
             for c_ip in combos_ip:
-                if _combo_overlaps_board(c_ip):
-                    continue
                 if c_ip[0] in set_oop or c_ip[1] in set_oop:
                     continue
                 cards_ip = (parse_card(c_ip[0]), parse_card(c_ip[1]))
@@ -374,13 +358,9 @@ def compute_postflop_equity_matrix(
         # It's expensive (C(45,2) = 990 runouts per combo pair), so it is opt-in.
         if exact_flop:
             for c_oop in combos_oop:
-                if _combo_overlaps_board(c_oop):
-                    continue
                 cards_oop = (parse_card(c_oop[0]), parse_card(c_oop[1]))
                 set_oop = {c_oop[0], c_oop[1]}
                 for c_ip in combos_ip:
-                    if _combo_overlaps_board(c_ip):
-                        continue
                     if c_ip[0] in set_oop or c_ip[1] in set_oop:
                         continue
                     cards_ip = (parse_card(c_ip[0]), parse_card(c_ip[1]))
@@ -401,13 +381,9 @@ def compute_postflop_equity_matrix(
                     eq_matrix[c_oop][c_ip] = (wins / n_runouts) if n_runouts else 0.5
         else:
             for c_oop in combos_oop:
-                if _combo_overlaps_board(c_oop):
-                    continue
                 cards_oop = (parse_card(c_oop[0]), parse_card(c_oop[1]))
                 set_oop = {c_oop[0], c_oop[1]}
                 for c_ip in combos_ip:
-                    if _combo_overlaps_board(c_ip):
-                        continue
                     if c_ip[0] in set_oop or c_ip[1] in set_oop:
                         continue
                     cards_ip = (parse_card(c_ip[0]), parse_card(c_ip[1]))
