@@ -18,6 +18,9 @@ RANKS = "AKQJT98765432"
 ALLOWED_STACKS = (20, 40, 100, 200)
 ALLOWED_RANGE_PROFILES = ("standard", "tight", "loose")
 
+# Hard cap for JSON request bodies (prevents accidental OOM / solver stalls).
+MAX_POST_BODY_BYTES = 2_000_000
+
 DEFAULT_OPEN_SIZE = 2.2
 
 # Cache simples para evitar reler arquivos JSON em cada request
@@ -395,6 +398,23 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         raw_len = int(self.headers.get("Content-Length", "0") or "0")
+        if raw_len < 0:
+            raw_len = 0
+
+        if raw_len > MAX_POST_BODY_BYTES:
+            # Drain the request body so the HTTP client can read the 413
+            # response cleanly (avoids client-side connection aborts).
+            remaining = raw_len
+            while remaining > 0:
+                chunk_size = min(65536, remaining)
+                chunk = self.rfile.read(chunk_size)
+                if not chunk:
+                    break
+                remaining -= len(chunk)
+
+            send_json(self, 413, {"error": "payload too large"})
+            return
+
         raw_body = self.rfile.read(raw_len) if raw_len > 0 else b""
 
         try:
@@ -423,26 +443,37 @@ class Handler(BaseHTTPRequestHandler):
             rake_pct = float(req.get("rakePct", 0.05))
             rake_cap = float(req.get("rakeCap", 3.0))
             iterations = int(req.get("iterations", 150))
-            # Keep equity matrix iteration budget aligned with the UI:
-            #   iters <= 80  -> 8
-            #   iters <= 150 -> 12
-            #   else         -> 20
-            # If the caller doesn't provide equity_iters, we select the same
-            # defaults to avoid slow end-to-end HTTP calls.
+
+            compute_mode = str(req.get("compute_mode", "compact") or "compact").lower().strip()
+
+            # Keep equity matrix iteration budget aligned with the UI.
+            # In "quality" compute_mode we allow a higher equity budget while
+            # still keeping the endpoint latency-bounded.
             if "equity_iters" in req:
                 equity_iters = int(req.get("equity_iters", 12))
             else:
-                # For small iteration budgets the equity matrix dominates runtime
-                # (FLOP equity is computed by Monte-Carlo). Keep it extra conservative
-                # to prevent end-to-end HTTP timeouts.
-                if iterations <= 30:
-                    equity_iters = 4
-                elif iterations <= 80:
-                    equity_iters = 8
-                elif iterations <= 150:
-                    equity_iters = 12
+                if compute_mode == "quality":
+                    if iterations <= 30:
+                        equity_iters = 8
+                    elif iterations <= 80:
+                        equity_iters = 12
+                    elif iterations <= 150:
+                        equity_iters = 16
+                    else:
+                        equity_iters = 24
                 else:
-                    equity_iters = 20
+                    # For small iteration budgets the equity matrix dominates runtime
+                    # (FLOP equity is computed by Monte-Carlo). Keep it extra conservative
+                    # to prevent end-to-end HTTP timeouts.
+                    if iterations <= 30:
+                        equity_iters = 4
+                    elif iterations <= 80:
+                        equity_iters = 8
+                    elif iterations <= 150:
+                        equity_iters = 12
+                    else:
+                        equity_iters = 20
+
             bet_config = req.get("betConfig", None)
             hero_cards = req.get("heroCards", None)
             if hero_cards is None:
@@ -465,15 +496,38 @@ class Handler(BaseHTTPRequestHandler):
                 bet_config = dict(bet_config)  # avoid mutating caller payload
 
                 if "expand_partial_sizes" not in bet_config:
-                    bet_config["expand_partial_sizes"] = False
+                    # In quality mode we allow more partial-size exploration
+                    # to improve decision quality, while still returning a
+                    # compact response payload.
+                    bet_config["expand_partial_sizes"] = True if compute_mode == "quality" else False
+
                 if "max_raises_per_street" not in bet_config or bet_config.get("max_raises_per_street") is None:
-                    bet_config["max_raises_per_street"] = 1
+                    # Quality mode: slightly deeper raise structure.
+                    bet_config["max_raises_per_street"] = 2 if compute_mode == "quality" else 1
 
                 # If ip_raise_sizes is omitted, the solver's aggressive default
                 # raise grid can blow up the tree even for small iteration
                 # budgets (used by the Mode 1 real-API validation script).
                 if "ip_raise_sizes" not in bet_config or bet_config.get("ip_raise_sizes") is None:
                     bet_config["ip_raise_sizes"] = [2.0]
+
+                # Further reduce branch fan-out in compact mode by capping
+                # each sizing grid to a single representative value.
+                # (This mostly affects standard-flop solves where the
+                # (eq-matrix + CFR) workload dominates latency.)
+                def _cap_first_list(key: str) -> None:
+                    v = bet_config.get(key)
+                    if isinstance(v, list) and v:
+                        # keep stable ordering but drop extras
+                        bet_config[key] = v[:1]
+
+                # In quality mode we preserve solver fan-out (better GTO
+                # decisions) but still keep the *response* compact (payload
+                # trimming happens in the solver layer).
+                if compute_mode != "quality":
+                    _cap_first_list("ip_cbet_sizes")
+                    _cap_first_list("check_raise_sizes")
+                    _cap_first_list("ip_raise_sizes")
 
             turn_samples = req.get("turn_samples", 8)
             try:

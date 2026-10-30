@@ -420,8 +420,10 @@ def solve_postflop_spot(
     # aggressively so the endpoint stays latency-bounded, while still
     # preserving the hero exact class via must_include=hero_cls.
     if iterations <= 10:
-        prune_keep_n = 12
-        prune_mass_fraction = 0.80
+        # For tiny HTTP budgets, aggressively shrink the combo universe
+        # to keep the FLOP equity-matrix computation within the timeout.
+        prune_keep_n = 7
+        prune_mass_fraction = 0.65
     elif iterations <= 30:
         prune_keep_n = 16
         prune_mass_fraction = 0.86
