@@ -8,7 +8,10 @@ import urllib.request
 from typing import Dict, Any, List, Tuple
 
 
-SERVER_PY = r"C:\Users\USER\Documents\Nova pasta\server.py"
+# Start the server from the *same directory* as this script.
+# This worktree-specific path ensures we validate the code we just modified.
+from pathlib import Path
+SERVER_PY = str(Path(__file__).resolve().parent / "server.py")
 STATUS_URL = "http://localhost:8000/api/status_mode1_v2.php"
 POSTFLOP_URL = "http://localhost:8000/api/query_postflop_gto.php"
 
@@ -89,6 +92,8 @@ def run_one(
         "effectiveStack": 100.0,
         "openSize": open_size,
         "iterations": iterations,
+        "compute_mode": "quality",
+        "response_mode": "compact",
         # hand-continuous fields (from poker_gto_mode1_app.html)
         "pot_pre_override": pot_pre_override,
         "oop_invested_pre": oop_invested_pre,
