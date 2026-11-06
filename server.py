@@ -1,5 +1,6 @@
 import json
 import os
+import hashlib
 from pathlib import Path
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from urllib.parse import unquote, parse_qs
@@ -22,6 +23,67 @@ ALLOWED_RANGE_PROFILES = ("standard", "tight", "loose")
 MAX_POST_BODY_BYTES = 2_000_000
 
 DEFAULT_OPEN_SIZE = 2.2
+
+
+def _normalize_card_for_seed(card: str) -> str:
+    """Normalize card string for deterministic seed hashing."""
+    c = str(card).strip()
+    if len(c) != 2:
+        return c
+    r, s = c[0].upper(), c[1].lower()
+    return r + s
+
+
+def _derive_equity_seed_from_payload(
+    *,
+    board: list[str],
+    hero_cards: list[str] | None,
+    hero_pos: str,
+    vill_open_pos: str,
+    preflop_action: str | None,
+    compute_mode: str,
+    tree_mode: str,
+    turn_card: str | None,
+    river_card: str | None,
+) -> int:
+    """Derive a deterministic 32-bit equity sampling seed.
+
+    This is derived from the request payload excluding `iterations` so that
+    equity Monte-Carlo sampling is stable across CFR+ iteration rungs.
+    """
+
+    hero_cards = list(hero_cards or [])
+
+    def norm_str(x: str | None) -> str:
+        return str(x or "").strip().lower()
+
+    def norm_pos(x: str | None) -> str:
+        return str(x or "").strip().upper()
+
+    seed_obj: dict[str, object] = {
+        "board": [ _normalize_card_for_seed(c) for c in board ],
+        "heroCards": [ _normalize_card_for_seed(c) for c in hero_cards ],
+        "heroPos": norm_pos(hero_pos),
+        "villOpenPos": norm_pos(vill_open_pos),
+        "preflop_action": str(preflop_action or "").upper().strip(),
+        "compute_mode": norm_str(compute_mode),
+        "tree_mode": norm_str(tree_mode),
+    }
+
+    if turn_card is not None:
+        tc = str(turn_card).strip()
+        seed_obj["turn_card"] = _normalize_card_for_seed(tc)
+    if river_card is not None:
+        rc = str(river_card).strip()
+        seed_obj["river_card"] = _normalize_card_for_seed(rc)
+
+    raw = json.dumps(seed_obj, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    digest = hashlib.sha256(raw.encode("utf-8")).digest()
+    u32 = int.from_bytes(digest[:4], "big", signed=False)
+
+    # Stable 32-bit-ish range.
+    return u32 % (2**31 - 1)
+
 
 # Cache simples para evitar reler arquivos JSON em cada request
 # chave: caminho absoluto do arquivo
@@ -172,15 +234,19 @@ def load_strategy_json(path: str):
 
 def send_json(handler: BaseHTTPRequestHandler, status: int, payload: dict):
     body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
-    handler.send_response(status)
-    handler.send_header("Content-Type", "application/json; charset=utf-8")
-    # CORS (permite fetch mesmo quando a página foi aberta via file://)
-    handler.send_header("Access-Control-Allow-Origin", "*")
-    handler.send_header("Access-Control-Allow-Methods", "POST, OPTIONS")
-    handler.send_header("Access-Control-Allow-Headers", "Content-Type")
-    handler.send_header("Content-Length", str(len(body)))
-    handler.end_headers()
-    handler.wfile.write(body)
+    try:
+        handler.send_response(status)
+        handler.send_header("Content-Type", "application/json; charset=utf-8")
+        # CORS (permite fetch mesmo quando a página foi aberta via file://)
+        handler.send_header("Access-Control-Allow-Origin", "*")
+        handler.send_header("Access-Control-Allow-Methods", "POST, OPTIONS")
+        handler.send_header("Access-Control-Allow-Headers", "Content-Type")
+        handler.send_header("Content-Length", str(len(body)))
+        handler.end_headers()
+        handler.wfile.write(body)
+    except ConnectionAbortedError:
+        # Client disconnected / timed out; don't crash the server.
+        return
 
 
 def infer_class(card1: str, card2: str) -> str:
@@ -453,14 +519,10 @@ class Handler(BaseHTTPRequestHandler):
                 equity_iters = int(req.get("equity_iters", 12))
             else:
                 if compute_mode == "quality":
-                    if iterations <= 30:
-                        equity_iters = 8
-                    elif iterations <= 80:
-                        equity_iters = 12
-                    elif iterations <= 150:
-                        equity_iters = 16
-                    else:
-                        equity_iters = 24
+                    # Fixed equity-sampling budget across ladder rungs for
+                    # stable, comparable EV curves while keeping the compact
+                    # endpoint latency-bounded.
+                    equity_iters = 12
                 else:
                     # For small iteration budgets the equity matrix dominates runtime
                     # (FLOP equity is computed by Monte-Carlo). Keep it extra conservative
@@ -468,7 +530,7 @@ class Handler(BaseHTTPRequestHandler):
                     if iterations <= 30:
                         equity_iters = 4
                     elif iterations <= 80:
-                        equity_iters = 8
+                        equity_iters = 12
                     elif iterations <= 150:
                         equity_iters = 12
                     else:
@@ -489,6 +551,28 @@ class Handler(BaseHTTPRequestHandler):
             # Default to compact to keep payload small enough for the HTTP client.
             response_mode = str(req.get("response_mode", "compact") or "compact").lower().strip()
 
+            # Optional convergence guard (CFR+ early stop)
+            def _parse_bool(x, default=False) -> bool:
+                if x is None:
+                    return default
+                if isinstance(x, bool):
+                    return x
+                s = str(x).strip().lower()
+                if s in ("1", "true", "yes", "y", "on"):
+                    return True
+                if s in ("0", "false", "no", "n", "off"):
+                    return False
+                return default
+
+            convergence_guard = _parse_bool(req.get("convergence_guard"), default=False)
+            convergence_eps = float(req.get("convergence_eps", 1e-4))
+            convergence_patience = int(req.get("convergence_patience", 2))
+            convergence_probe_every = int(req.get("convergence_probe_every", 5))
+            if convergence_probe_every <= 0:
+                convergence_probe_every = 5
+            if convergence_patience <= 0:
+                convergence_patience = 1
+
             # Compact HTTP calls must stay latency-bounded. If the caller
             # omits sizing-grid expansion or raise-depth controls, apply
             # conservative defaults to prevent server-side timeouts.
@@ -496,14 +580,27 @@ class Handler(BaseHTTPRequestHandler):
                 bet_config = dict(bet_config)  # avoid mutating caller payload
 
                 if "expand_partial_sizes" not in bet_config:
-                    # In quality mode we allow more partial-size exploration
-                    # to improve decision quality, while still returning a
-                    # compact response payload.
-                    bet_config["expand_partial_sizes"] = True if compute_mode == "quality" else False
+                    # Quality mode: allow more partial-size exploration, but keep
+                    # the ladder (compact HTTP + iterations=60) latency-bounded.
+                    #
+                    # The convergence ladder test is sensitive both to timeouts and
+                    # to EV drift caused by changing game tree structure.
+                    # We therefore only enable the heavier expansion for the smallest
+                    # budgets.
+                    allow_heavy_quality_expansion = (
+                        compute_mode == "quality" and iterations <= 30
+                    )
+                    bet_config["expand_partial_sizes"] = (
+                        True if allow_heavy_quality_expansion else False
+                    )
 
                 if "max_raises_per_street" not in bet_config or bet_config.get("max_raises_per_street") is None:
-                    # Quality mode: slightly deeper raise structure.
-                    bet_config["max_raises_per_street"] = 2 if compute_mode == "quality" else 1
+                    allow_heavy_quality_expansion = (
+                        compute_mode == "quality" and iterations <= 30
+                    )
+                    bet_config["max_raises_per_street"] = (
+                        2 if allow_heavy_quality_expansion else 1
+                    )
 
                 # If ip_raise_sizes is omitted, the solver's aggressive default
                 # raise grid can blow up the tree even for small iteration
@@ -524,7 +621,10 @@ class Handler(BaseHTTPRequestHandler):
                 # In quality mode we preserve solver fan-out (better GTO
                 # decisions) but still keep the *response* compact (payload
                 # trimming happens in the solver layer).
-                if compute_mode != "quality":
+                # In quality mode we preserve solver fan-out for better decisions,
+                # but we still must keep compact HTTP responses latency-bounded.
+                # For mid/upper ladder rungs, cap the fan-out even in quality mode.
+                if compute_mode != "quality" or iterations > 30:
                     _cap_first_list("ip_cbet_sizes")
                     _cap_first_list("check_raise_sizes")
                     _cap_first_list("ip_raise_sizes")
@@ -557,6 +657,18 @@ class Handler(BaseHTTPRequestHandler):
                 ip_invested_pre = float(ip_invested_pre)
 
             try:
+                equity_seed = _derive_equity_seed_from_payload(
+                    board=board,
+                    hero_cards=hero_cards,
+                    hero_pos=hero_pos,
+                    vill_open_pos=vill_open_pos,
+                    preflop_action=preflop_action,
+                    compute_mode=compute_mode,
+                    tree_mode=tree_mode,
+                    turn_card=turn_card,
+                    river_card=river_card,
+                )
+
                 results = ps.solve_postflop_spot(
                     board=board,
                     hero_pos=hero_pos,
@@ -578,7 +690,13 @@ class Handler(BaseHTTPRequestHandler):
                     turn_card=turn_card,
                     river_samples=river_samples,
                     river_card=river_card,
+                    compute_mode=compute_mode,
                     response_mode=response_mode,
+                    equity_seed=equity_seed,
+                    convergence_guard=convergence_guard,
+                    convergence_eps=convergence_eps,
+                    convergence_patience=convergence_patience,
+                    convergence_probe_every=convergence_probe_every,
                 )
 
                 if isinstance(hero_cards, list) and len(hero_cards) == 2:
