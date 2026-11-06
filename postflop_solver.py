@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import copy
 import random
+import time
 from typing import Any, Dict, List, Optional, Set, Tuple
 
 import eval7
@@ -735,8 +736,19 @@ class PostflopCFRSolver:
         }
 
         # Build Game Tree (support hand-continuous initial investments)
+        self._timings_ms: Dict[str, float] = {
+            "tree_build_ms": 0.0,
+            "equity_matrix_ms": 0.0,
+            "cfr_ms": 0.0,
+            "total_ms": 0.0,
+        }
+
+        t_total0 = time.perf_counter()
+
         tree_mode_norm = str(tree_mode or "standard").lower().strip()
         turn_variant_board_keys: List[Tuple[str, ...]] = []
+
+        t_tree0 = time.perf_counter()
 
         if tree_mode_norm == "flop_to_turn":
             if len(self.board) != 3:
@@ -823,7 +835,11 @@ class PostflopCFRSolver:
 
         _stamp(self.root)
 
+        t_tree1 = time.perf_counter()
+        self._timings_ms["tree_build_ms"] = (t_tree1 - t_tree0) * 1000.0
+
         # Compute / Initialize Equity Matrix
+        t_eq0 = time.perf_counter()
         # Standard mode computes a single equity matrix for self.board.
         # flop->turn mode additionally computes equity matrices for each
         # sampled TURN board_key so SHOWDOWN EV can select the right board.
@@ -850,6 +866,9 @@ class PostflopCFRSolver:
                     seed=self.seed,
                 )
                 self.equity_matrices[bkey] = eq
+
+        t_eq1 = time.perf_counter()
+        self._timings_ms["equity_matrix_ms"] = (t_eq1 - t_eq0) * 1000.0
 
         # Hero combo tracking for EV-by-action recommendation
         # Importante: as keys dos combos em postflop_evaluator vêm do gerador ALL_COMBOS_1326,
@@ -941,15 +960,58 @@ class PostflopCFRSolver:
 
         return {a: max(0.0, regrets.get(a, 0.0)) / total_pos for a in actions}
 
-    def solve(self, iterations: int = 300) -> Dict[str, Any]:
+    def solve(
+        self,
+        iterations: int = 300,
+        *,
+        convergence_guard: bool = False,
+        convergence_eps: float = 1e-4,
+        convergence_patience: int = 2,
+        convergence_probe_every: int = 5,
+    ) -> Dict[str, Any]:
         """Run CFR+ iterations across the tree.
 
         Supports incremental calls (adaptive batching) by keeping an internal iteration offset.
+        If `convergence_guard` is enabled, performs periodic convergence checks and may
+        stop early.
         """
 
         start_it = self._cfr_iters_done + 1
         end_it = self._cfr_iters_done + iterations
 
+        stop_reason = "reached_iterations"
+        consecutive_good = 0
+        convergence_metric_history: List[Dict[str, float]] = []
+
+        def compute_metric_at_it(it: int) -> float:
+            # Proxy metric: global maximum normalized positive regret across all
+            # decision nodes, normalized by the total number of completed iterations `it`.
+            denom = float(max(1, it))
+            global_max = 0.0
+
+            for decision_node in self._iter_decision_nodes(self.root):
+                combos = self.combos_oop if decision_node.player == "OOP" else self.combos_ip
+
+                node_max = 0.0
+                for combo in combos:
+                    regrets = decision_node.regrets.get(combo, {})
+                    if not regrets:
+                        continue
+                    max_regret = max(
+                        (max(0.0, float(value)) for value in regrets.values()),
+                        default=0.0,
+                    )
+                    normalized = max_regret / denom
+                    if normalized > node_max:
+                        node_max = normalized
+
+                if node_max > global_max:
+                    global_max = node_max
+
+            return float(global_max)
+
+        completed_it = end_it
+        t_cfr0 = time.perf_counter()
         for it in range(start_it, end_it + 1):
             # Weight for CFR+ strategy averaging (linear weighting by absolute iter index)
             weight = float(it)
@@ -961,10 +1023,55 @@ class PostflopCFRSolver:
             # Traverse tree
             self._cfr_traverse(self.root, reach_oop, reach_ip, weight)
 
-        self._cfr_iters_done = end_it
+            if convergence_guard and convergence_probe_every > 0 and it % convergence_probe_every == 0:
+                metric = compute_metric_at_it(it)
+                convergence_metric_history.append(
+                    {"iteration": float(it), "metric": float(metric)}
+                )
+
+                if metric < float(convergence_eps):
+                    consecutive_good += 1
+                    if consecutive_good >= int(convergence_patience):
+                        stop_reason = "metric_below_threshold"
+                        completed_it = it
+                        break
+                else:
+                    consecutive_good = 0
+
+        # Ensure internal iteration accounting matches the actual number of completed iters.
+        self._timings_ms["cfr_ms"] += (time.perf_counter() - t_cfr0) * 1000.0
+
+        # Total wall clock for the CFR solve (tree+equity computed in __init__).
+        # The service layer expects these keys to exist.
+        # We keep total_ms consistent with tree+equity+cfr.
+        self._timings_ms["total_ms"] = (
+            self._timings_ms["tree_build_ms"]
+            + self._timings_ms["equity_matrix_ms"]
+            + self._timings_ms["cfr_ms"]
+        )
+
+        self._cfr_iters_done = int(completed_it)
+
+        if convergence_guard and not convergence_metric_history:
+            # No probe checkpoints fired within the budget; still return a single
+            # metric snapshot so clients can reason about why we stopped.
+            metric = compute_metric_at_it(completed_it)
+            convergence_metric_history = [
+                {"iteration": float(completed_it), "metric": float(metric)}
+            ]
 
         # Extract final strategies & EVs across all nodes
-        return self._extract_all_node_results()
+        results = self._extract_all_node_results()
+
+        # Timings contract (filled/totaled by the service layer).
+        results["timings_ms"] = dict(self._timings_ms)
+
+        if convergence_guard:
+            results["iterations_completed"] = int(completed_it)
+            results["stop_reason"] = stop_reason
+            results["convergence_metric_history"] = convergence_metric_history
+
+        return results
 
     def _validate_tree_convention(self, node: PostflopGameNode) -> None:
         """Defensive: terminals never carry a seat, investments reconstruct the pot."""
